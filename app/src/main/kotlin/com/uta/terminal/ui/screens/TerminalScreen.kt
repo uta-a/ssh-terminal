@@ -395,7 +395,13 @@ fun TerminalScreen(
                                             true
                                         } else false
                                     } else false
-                                    if (!consumed) inputTfv = newV
+                                    if (consumed) {
+                                        // 消費した文字はバッファに残さず、合成（composition）を解除した
+                                        // 確定状態へ明示的に戻して IME と再同期する（表示デシンク防止）。
+                                        inputTfv = TextFieldValue(old, TextRange(old.length))
+                                    } else {
+                                        inputTfv = newV
+                                    }
                                 },
                                 modifier = Modifier
                                     .fillMaxSize()
