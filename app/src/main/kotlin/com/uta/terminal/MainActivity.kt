@@ -10,20 +10,27 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -32,13 +39,19 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
@@ -113,6 +126,8 @@ private fun AppRoot(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val sessions by sessionManager.sessions.collectAsState()
+    // 長押しで削除確認するセッション（null＝ダイアログ非表示）。
+    var sessionToDelete by remember { mutableStateOf<SessionInfo?>(null) }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -125,6 +140,7 @@ private fun AppRoot(
                     scope.launch { drawerState.close() }
                     navController.navigate(Routes.TERMINAL) { launchSingleTop = true }
                 },
+                onLongPressSession = { info -> sessionToDelete = info },
                 onNewSession = {
                     scope.launch { drawerState.close() }
                     navController.navigate(Routes.ADDRESS_BOOK) {
@@ -218,13 +234,34 @@ private fun AppRoot(
             }
         }
     }
+
+    // セッション長押し → 切断して一覧から削除する確認ダイアログ。
+    val toDelete = sessionToDelete
+    if (toDelete != null) {
+        AlertDialog(
+            onDismissRequest = { sessionToDelete = null },
+            title = { Text("セッションを削除") },
+            text = { Text("「${toDelete.label}」を切断して一覧から削除します。よろしいですか？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    sessionController.disconnect(toDelete.id)
+                    sessionToDelete = null
+                }) { Text("削除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { sessionToDelete = null }) { Text("キャンセル") }
+            },
+        )
+    }
 }
 
 /** ドロワー：上部＝開いているセッション一覧＋新規、下部固定＝設定。 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SessionDrawer(
     sessions: List<SessionInfo>,
     onSelectSession: (com.uta.terminal.core.model.SessionId) -> Unit,
+    onLongPressSession: (SessionInfo) -> Unit,
     onNewSession: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
@@ -238,20 +275,34 @@ private fun SessionDrawer(
             )
             LazyColumn(modifier = Modifier.weight(1f)) {
                 items(sessions, key = { it.id.value }) { s ->
-                    NavigationDrawerItem(
-                        // 生存インジケータ：接続中は緑、確立中は tertiary、失敗は error、切断は灰。
-                        icon = {
-                            Box(
-                                modifier = Modifier
-                                    .size(10.dp)
-                                    .background(sessionDotColor(s.state), CircleShape),
+                    // タップで切替、長押しで削除確認。NavigationDrawerItem は長押しを扱えないため
+                    // combinedClickable で自前の行を組む（見た目は近似）。
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 2.dp)
+                            .clip(RoundedCornerShape(28.dp))
+                            .combinedClickable(
+                                onClick = { onSelectSession(s.id) },
+                                onLongClick = { onLongPressSession(s) },
                             )
-                        },
-                        label = { Text(s.label) },
-                        selected = false,
-                        onClick = { onSelectSession(s.id) },
-                        modifier = Modifier.padding(horizontal = 12.dp),
-                    )
+                            .padding(horizontal = 16.dp, vertical = 16.dp),
+                    ) {
+                        // 生存インジケータ：接続中は緑、確立中は tertiary、失敗は error、切断は灰。
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .background(sessionDotColor(s.state), CircleShape),
+                        )
+                        Spacer(Modifier.width(16.dp))
+                        Text(
+                            s.label,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
                 item {
                     NavigationDrawerItem(
