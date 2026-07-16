@@ -80,6 +80,8 @@ class SessionController(
         sessions[id] = session
         activeId = id
         sessionManager.upsert(SessionInfo(id, displayLabel, SessionState.Connecting))
+        // アクティブの真実の源を一本化：SessionManager にも新規セッションをアクティブとして伝える。
+        sessionManager.setActive(id)
         // 常駐通知の開始はフォアグラウンド（ユーザー操作）である connect() でのみ行う。
         SshForegroundService.start(appContext, notificationText())
 
@@ -104,6 +106,7 @@ class SessionController(
     fun setActive(id: SessionId) {
         if (sessions.containsKey(id)) {
             activeId = id
+            sessionManager.setActive(id)
             refreshNotification()
         }
     }
@@ -124,7 +127,13 @@ class SessionController(
         s.transport.onActivity = null
         s.transport.close()
         sessionManager.remove(id)
-        if (activeId == id) activeId = sessions.keys.firstOrNull()
+        // 次のアクティブは SessionManager の挿入順（ドロワー表示順）に合わせる。
+        // SnapshotStateMap.keys の反復順に依存しないことで、削除後の選択が決定的になる。
+        if (activeId == id) {
+            val next = sessionManager.sessions.value.firstOrNull()?.id
+            activeId = next
+            if (next != null) sessionManager.setActive(next)
+        }
         refreshNotification()
     }
 
