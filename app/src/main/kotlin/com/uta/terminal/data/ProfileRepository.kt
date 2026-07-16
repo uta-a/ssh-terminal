@@ -20,6 +20,8 @@ data class HostProfile(
     val username: String,
     val authKind: AuthKind,
     val keyId: String? = null,
+    val pinned: Boolean = false,
+    val tags: List<String> = emptyList(),
 )
 
 /** プロファイルに保存する認証情報の指定。 */
@@ -38,11 +40,15 @@ sealed interface AuthInput {
  */
 class ProfileRepository(
     private val dao: ProfileDao,
+    private val tagDao: TagDao,
     private val keyRepository: SshKeyRepository,
 ) {
 
     val profiles: Flow<List<HostProfile>> =
         dao.observeAll().map { list -> list.map { it.toHostProfile() } }
+
+    /** 既存タグ（名前と使用数）。フィルタチップ・タグ入力候補に使う。 */
+    val tags: Flow<List<TagWithCount>> = tagDao.observeTagsWithCount()
 
     suspend fun save(
         label: String,
@@ -50,6 +56,7 @@ class ProfileRepository(
         port: Int,
         username: String,
         auth: AuthInput,
+        tags: List<String> = emptyList(),
     ): String = withContext(Dispatchers.IO) {
         val id = UUID.randomUUID().toString()
         val sealed = seal(auth)
@@ -72,17 +79,25 @@ class ProfileRepository(
                 keyId = sealed.keyId,
             ),
         )
+        tagDao.setProfileTags(id, tags) { UUID.randomUUID().toString() }
         id
     }
 
-    /** 保存済みプロファイルを 1 件取得する（秘密は含まない）。 */
+    /** 保存済みプロファイルを 1 件取得する（秘密は含まず、タグ・ピンを含む）。 */
     suspend fun get(id: String): HostProfile? = withContext(Dispatchers.IO) {
-        dao.getById(id)?.toHostProfile()
+        val e = dao.getById(id) ?: return@withContext null
+        e.toHostProfile(tags = resolveTagNames(id))
+    }
+
+    private suspend fun resolveTagNames(profileId: String): List<String> {
+        val ids = tagDao.tagIdsFor(profileId)
+        if (ids.isEmpty()) return emptyList()
+        return tagDao.tagsByIds(ids).map { it.name }.sortedBy { it.lowercase() }
     }
 
     /**
      * プロファイルを更新する。[auth] が null のときは認証情報を変更せず、
-     * 非秘密情報だけを更新する（編集画面で認証を触らなかった場合）。
+     * 非秘密情報だけを更新する（編集画面で認証を触らなかった場合）。[tags] は常に置き換える。
      */
     suspend fun update(
         id: String,
@@ -91,6 +106,7 @@ class ProfileRepository(
         port: Int,
         username: String,
         auth: AuthInput?,
+        tags: List<String> = emptyList(),
     ) = withContext(Dispatchers.IO) {
         val e = dao.getById(id) ?: return@withContext
         val updated = if (auth == null) {
@@ -111,22 +127,35 @@ class ProfileRepository(
             )
         }
         dao.upsert(updated)
+        tagDao.setProfileTags(id, tags) { UUID.randomUUID().toString() }
     }
 
-    /** プロファイルを複製する（ラベルに「(コピー)」を付け、一覧の先頭に置く）。秘密ごと複製される。 */
+    /** ピン留めの切り替え。 */
+    suspend fun setPinned(id: String, pinned: Boolean) = withContext(Dispatchers.IO) {
+        dao.setPinned(id, pinned)
+    }
+
+    /** プロファイルを複製する（ラベルに「(コピー)」を付け、一覧の先頭に置く）。秘密・タグごと複製される。 */
     suspend fun duplicate(id: String) = withContext(Dispatchers.IO) {
         val e = dao.getById(id) ?: return@withContext
+        val newId = UUID.randomUUID().toString()
         dao.upsert(
             e.copy(
-                id = UUID.randomUUID().toString(),
+                id = newId,
                 label = "${e.label} (コピー)",
                 createdAt = System.currentTimeMillis(),
                 sortOrder = (dao.minSortOrder() ?: 0) - 1,
+                pinned = false,
             ),
         )
+        tagDao.setProfileTags(newId, resolveTagNames(id)) { UUID.randomUUID().toString() }
     }
 
-    suspend fun delete(id: String) = withContext(Dispatchers.IO) { dao.delete(id) }
+    suspend fun delete(id: String) = withContext(Dispatchers.IO) {
+        // profile_tags は FK CASCADE で消える。参照が無くなったタグは掃除する。
+        dao.delete(id)
+        tagDao.deleteOrphanTags()
+    }
 
     /** 一覧の並び順を永続化する（渡した id 順に sortOrder=0,1,2… を振る）。 */
     suspend fun reorder(orderedIds: List<String>) = withContext(Dispatchers.IO) {
@@ -208,7 +237,11 @@ private fun seal(auth: AuthInput): SealedAuth = when (auth) {
     }
 }
 
-private fun ProfileEntity.toHostProfile() = HostProfile(
+private fun ProfileWithTags.toHostProfile() = profile.toHostProfile(
+    tags = tags.map { it.name }.sortedBy { it.lowercase() },
+)
+
+private fun ProfileEntity.toHostProfile(tags: List<String> = emptyList()) = HostProfile(
     id = id,
     label = label,
     host = host,
@@ -216,4 +249,6 @@ private fun ProfileEntity.toHostProfile() = HostProfile(
     username = username,
     authKind = if (authKind == "KEY") AuthKind.KEY else AuthKind.PASSWORD,
     keyId = keyId,
+    pinned = pinned,
+    tags = tags,
 )

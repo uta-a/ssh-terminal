@@ -208,12 +208,17 @@ private fun AppRoot(
             }
             composable(Routes.ADDRESS_BOOK) {
                 val profiles by profileRepository.profiles.collectAsState(initial = emptyList())
+                val tags by profileRepository.tags.collectAsState(initial = emptyList())
                 AddressBookScreen(
                     profiles = profiles,
+                    allTags = tags,
                     onAddNew = { navController.navigate(Routes.connect()) },
                     onEdit = { profile -> navController.navigate(Routes.connect(profile.id)) },
                     onDuplicate = { profile ->
                         scope.launch { profileRepository.duplicate(profile.id) }
+                    },
+                    onTogglePin = { profile ->
+                        scope.launch { profileRepository.setPinned(profile.id, !profile.pinned) }
                     },
                     onConnect = { profile ->
                         scope.launch {
@@ -269,12 +274,14 @@ private fun AppRoot(
                         ready = true
                     }
                 }
+                val tagNames by profileRepository.tags.collectAsState(initial = emptyList())
                 if (ready) {
                     ConnectScreen(
                         keys = keys,
+                        allTags = tagNames.map { it.name },
                         initial = initial,
                         onBack = { navController.popBackStack() },
-                        onConnect = { label, host, port, username, spec, save ->
+                        onConnect = { label, host, port, username, spec, save, tags ->
                             scope.launch {
                                 val resolved = try {
                                     resolveAuthSpec(spec, sshKeyRepository)
@@ -286,7 +293,7 @@ private fun AppRoot(
                                     return@launch
                                 }
                                 val (auth, input) = resolved
-                                if (save) profileRepository.save(label, host, port, username, input)
+                                if (save) profileRepository.save(label, host, port, username, input, tags)
                                 val req = SshConnectionRequest(host, port, username, auth, cols = 80, rows = 24)
                                 sessionController.connect(req, label)
                                 // CONNECT を積み残さず、戻るでホスト一覧へ戻す。
@@ -296,7 +303,7 @@ private fun AppRoot(
                                 }
                             }
                         },
-                        onSaveEdit = { label, host, port, username, spec ->
+                        onSaveEdit = { label, host, port, username, spec, tags ->
                             val id = initial?.id
                             scope.launch {
                                 if (id != null) {
@@ -308,7 +315,7 @@ private fun AppRoot(
                                             sshKeyRepository.add(spec.name, spec.pem, spec.passphrase),
                                         )
                                     }
-                                    profileRepository.update(id, label, host, port, username, input)
+                                    profileRepository.update(id, label, host, port, username, input, tags)
                                 }
                                 navController.popBackStack()
                             }

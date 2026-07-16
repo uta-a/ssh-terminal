@@ -2,16 +2,34 @@ package com.uta.terminal.data
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.Junction
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Relation
 import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
+/** プロファイル本体＋付与タグ（多対多を [ProfileTagCrossRef] 経由で解決）。 */
+data class ProfileWithTags(
+    @androidx.room.Embedded val profile: ProfileEntity,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "id",
+        associateBy = Junction(
+            value = ProfileTagCrossRef::class,
+            parentColumn = "profileId",
+            entityColumn = "tagId",
+        ),
+    )
+    val tags: List<TagEntity>,
+)
+
 @Dao
 interface ProfileDao {
-    // 手動並び替えの sortOrder 昇順。同順は新しい順（createdAt DESC）で安定させる。
-    @Query("SELECT * FROM profiles ORDER BY sortOrder ASC, createdAt DESC")
-    fun observeAll(): Flow<List<ProfileEntity>>
+    // ピン留め優先、次に手動並び替えの sortOrder 昇順。同順は新しい順（createdAt DESC）で安定させる。
+    @Transaction
+    @Query("SELECT * FROM profiles ORDER BY pinned DESC, sortOrder ASC, createdAt DESC")
+    fun observeAll(): Flow<List<ProfileWithTags>>
 
     @Query("SELECT * FROM profiles WHERE id = :id")
     suspend fun getById(id: String): ProfileEntity?
@@ -24,6 +42,9 @@ interface ProfileDao {
 
     @Query("UPDATE profiles SET sortOrder = :order WHERE id = :id")
     suspend fun updateSortOrder(id: String, order: Int)
+
+    @Query("UPDATE profiles SET pinned = :pinned WHERE id = :id")
+    suspend fun setPinned(id: String, pinned: Boolean)
 
     /** 渡した id 順に sortOrder=0,1,2… を 1 トランザクションで振り直す（途中失敗で不整合にしない）。 */
     @Transaction

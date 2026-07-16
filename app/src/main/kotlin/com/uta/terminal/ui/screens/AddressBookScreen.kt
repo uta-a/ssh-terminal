@@ -10,6 +10,8 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,18 +24,23 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -42,11 +49,14 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -58,6 +68,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,9 +90,10 @@ import kotlin.math.roundToInt
 /**
  * ホスト一覧（アプリのホーム）。保存済み接続先をカードで一覧表示する。
  * - カードタップ：保存済み情報を復号して接続。
- * - カード右端の ⋮ メニュー：編集 / 複製 / 削除（全操作の見える入口）。
- * - カード長押し＋上下ドラッグ：並び替え（[onReorder] で永続化）。
+ * - カード右端の ⋮ メニュー：編集 / 複製 / ピン留め / 削除（全操作の見える入口）。
+ * - カード長押し＋上下ドラッグ：並び替え（[onReorder] で永続化。**フィルタ中は無効**）。
  * - カード横スワイプ：赤い削除ボタンを表出（削除のショートカット）。
+ * - 上部に検索欄とタグフィルタチップ（複数選択＝AND）。ピン留めは一覧上部に浮かせて表示。
  * - 削除はどの経路でも確認ダイアログを挟む（秘密ごと消え、復元できないため）。
  * - ＋/中央ボタン：新規接続フォームへ。
  */
@@ -89,10 +101,12 @@ import kotlin.math.roundToInt
 @Composable
 fun AddressBookScreen(
     profiles: List<HostProfile>,
+    allTags: List<com.uta.terminal.data.TagWithCount>,
     onAddNew: () -> Unit,
     onConnect: (HostProfile) -> Unit,
     onEdit: (HostProfile) -> Unit,
     onDuplicate: (HostProfile) -> Unit,
+    onTogglePin: (HostProfile) -> Unit,
     onDelete: (String) -> Unit,
     onReorder: (List<String>) -> Unit,
     onOpenSettings: () -> Unit,
@@ -100,6 +114,25 @@ fun AddressBookScreen(
 ) {
     // 削除確認ダイアログの対象（null＝非表示）。スワイプX・⋮メニューの両経路からここに集約する。
     var confirmDelete by remember { mutableStateOf<HostProfile?>(null) }
+    // 検索・タグフィルタ。フィルタ中は並び替えを無効化する（部分リストと全体順のずれ防止）。
+    var query by rememberSaveable { mutableStateOf("") }
+    val selectedTags = rememberSaveable(saver = stringListSaver) { mutableStateOf(emptyList<String>()) }
+    val filtering = query.isNotBlank() || selectedTags.value.isNotEmpty()
+
+    val filtered = remember(profiles, query, selectedTags.value) {
+        val q = query.trim().lowercase()
+        profiles.filter { p ->
+            (selectedTags.value.isEmpty() || selectedTags.value.all { it in p.tags }) &&
+                (
+                    q.isEmpty() ||
+                        p.label.lowercase().contains(q) ||
+                        p.host.lowercase().contains(q) ||
+                        p.username.lowercase().contains(q) ||
+                        p.tags.any { it.lowercase().contains(q) }
+                )
+        }
+    }
+
     // 並び替え中のライブ順を保持するローカル State。**識別子を安定させる**ため remember はキー無しにし、
     // profiles の再発行は LaunchedEffect で中身だけ同期する（DragDropState のクロージャが
     // 初期 emptyList の State を掴んだままにならないようにする＝クラッシュ/未反映の防止）。
@@ -159,60 +192,111 @@ fun AddressBookScreen(
                 onAddNew = onAddNew,
             )
         } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    // 長押し＋ドラッグで並び替え。ドロップで新しい順を永続化する。
-                    .pointerInput(dragState) {
-                        detectDragGesturesAfterLongPress(
-                            onDragStart = { offset -> dragState.onDragStart(offset.y) },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                dragState.onDrag(dragAmount.y)
-                                // 指が端に近ければ自動スクロールを回す（1本のジョブで継続）。
-                                if (autoScrollJob?.isActive != true && dragState.autoScrollDelta() != 0f) {
-                                    autoScrollJob = scope.launch {
-                                        while (true) {
-                                            val d = dragState.autoScrollDelta()
-                                            if (d == 0f) break
-                                            listState.scrollBy(d * 0.5f)
-                                            dragState.onDrag(0f) // スクロール後に入れ替え判定を更新
-                                            delay(16)
-                                        }
-                                    }
-                                }
-                            },
-                            onDragEnd = {
-                                autoScrollJob?.cancel()
-                                dragState.onDragEnd()
-                                onReorder(itemsState.value.map { it.id })
-                            },
-                            onDragCancel = {
-                                autoScrollJob?.cancel()
-                                dragState.onDragEnd()
-                            },
-                        )
-                    },
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                itemsIndexed(items, key = { _, it -> it.id }) { index, p ->
-                    val isDragging = index == dragState.draggingItemIndex
-                    HostRow(
-                        profile = p,
-                        dragging = isDragging,
-                        modifier = Modifier
-                            .zIndex(if (isDragging) 1f else 0f)
-                            .graphicsLayer {
-                                translationY = if (isDragging) dragState.draggingItemOffset else 0f
-                            },
-                        onConnect = { onConnect(p) },
-                        onEdit = { onEdit(p) },
-                        onDuplicate = { onDuplicate(p) },
-                        onDeleteRequest = { confirmDelete = p },
+            Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+                // 検索欄（常設）とタグチップはリスト外に置く（ドラッグの index 計算を汚さない）。
+                SearchBar(query = query, onQueryChange = { query = it })
+                if (allTags.isNotEmpty()) {
+                    TagFilterRow(
+                        tags = allTags,
+                        selected = selectedTags.value,
+                        onToggle = { name ->
+                            selectedTags.value = if (name in selectedTags.value) {
+                                selectedTags.value - name
+                            } else {
+                                selectedTags.value + name
+                            }
+                        },
                     )
+                }
+
+                if (filtering) {
+                    // フィルタ中：ドラッグ無効の素朴なリスト（部分リストで並び替えを許すと順序が壊れる）。
+                    if (filtered.isEmpty()) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "該当する接続先がありません",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            items(filtered, key = { it.id }) { p ->
+                                HostRow(
+                                    profile = p,
+                                    dragging = false,
+                                    onConnect = { onConnect(p) },
+                                    onEdit = { onEdit(p) },
+                                    onDuplicate = { onDuplicate(p) },
+                                    onTogglePin = { onTogglePin(p) },
+                                    onDeleteRequest = { confirmDelete = p },
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            // 長押し＋ドラッグで並び替え。ドロップで新しい順を永続化する。
+                            .pointerInput(dragState) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = { offset -> dragState.onDragStart(offset.y) },
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        dragState.onDrag(dragAmount.y)
+                                        // 指が端に近ければ自動スクロールを回す（1本のジョブで継続）。
+                                        if (autoScrollJob?.isActive != true && dragState.autoScrollDelta() != 0f) {
+                                            autoScrollJob = scope.launch {
+                                                while (true) {
+                                                    val d = dragState.autoScrollDelta()
+                                                    if (d == 0f) break
+                                                    listState.scrollBy(d * 0.5f)
+                                                    dragState.onDrag(0f) // スクロール後に入れ替え判定を更新
+                                                    delay(16)
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onDragEnd = {
+                                        autoScrollJob?.cancel()
+                                        dragState.onDragEnd()
+                                        onReorder(itemsState.value.map { it.id })
+                                    },
+                                    onDragCancel = {
+                                        autoScrollJob?.cancel()
+                                        dragState.onDragEnd()
+                                    },
+                                )
+                            },
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        itemsIndexed(items, key = { _, it -> it.id }) { index, p ->
+                            val isDragging = index == dragState.draggingItemIndex
+                            HostRow(
+                                profile = p,
+                                dragging = isDragging,
+                                modifier = Modifier
+                                    .zIndex(if (isDragging) 1f else 0f)
+                                    .graphicsLayer {
+                                        translationY = if (isDragging) dragState.draggingItemOffset else 0f
+                                    },
+                                onConnect = { onConnect(p) },
+                                onEdit = { onEdit(p) },
+                                onDuplicate = { onDuplicate(p) },
+                                onTogglePin = { onTogglePin(p) },
+                                onDeleteRequest = { confirmDelete = p },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -247,6 +331,7 @@ private fun HostRow(
     onConnect: () -> Unit,
     onEdit: () -> Unit,
     onDuplicate: () -> Unit,
+    onTogglePin: () -> Unit,
     onDeleteRequest: () -> Unit,
 ) {
     val authText = if (profile.authKind == AuthKind.KEY) "鍵" else "パスワード"
@@ -325,12 +410,23 @@ private fun HostRow(
                 )
                 Spacer(Modifier.size(18.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        profile.label,
-                        style = MaterialTheme.typography.titleLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (profile.pinned) {
+                            Icon(
+                                Icons.Filled.PushPin,
+                                contentDescription = "ピン留め",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.size(6.dp))
+                        }
+                        Text(
+                            profile.label,
+                            style = MaterialTheme.typography.titleLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Spacer(Modifier.size(4.dp))
                     Text(
                         "${profile.username}@${profile.host}:${profile.port}  ·  $authText",
@@ -339,6 +435,10 @@ private fun HostRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (profile.tags.isNotEmpty()) {
+                        Spacer(Modifier.size(8.dp))
+                        TagChipsWrap(profile.tags)
+                    }
                 }
                 // 全操作の「見える入口」。ジェスチャー（スワイプ削除・長押し並び替え）は
                 // ショートカット扱いで、ここから編集/複製/削除に必ず到達できる。
@@ -365,6 +465,14 @@ private fun HostRow(
                             onClick = {
                                 menuOpen = false
                                 onDuplicate()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (profile.pinned) "ピン留めを解除" else "ピン留め") },
+                            leadingIcon = { Icon(Icons.Filled.PushPin, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                onTogglePin()
                             },
                         )
                         DropdownMenuItem(
@@ -463,6 +571,84 @@ private class DragDropState(
         pointerY = 0f
     }
 }
+
+/** 常設の検索欄（label/host/user/タグを部分一致）。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        singleLine = true,
+        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(Icons.Filled.Close, contentDescription = "クリア")
+                }
+            }
+        },
+        placeholder = { Text("検索（名前・ホスト・ユーザー・タグ）") },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    )
+}
+
+/** タグフィルタチップ（横スクロール・複数選択＝AND）。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TagFilterRow(
+    tags: List<com.uta.terminal.data.TagWithCount>,
+    selected: List<String>,
+    onToggle: (String) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(tags, key = { it.id }) { tag ->
+            val isSel = tag.name in selected
+            FilterChip(
+                selected = isSel,
+                onClick = { onToggle(tag.name) },
+                label = { Text(tag.name) },
+                leadingIcon = if (isSel) {
+                    { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                } else {
+                    null
+                },
+            )
+        }
+    }
+}
+
+/** カード内のタグ表示（折り返し）。 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TagChipsWrap(tags: List<String>) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        tags.forEach { tag ->
+            SuggestionChip(
+                onClick = {},
+                label = { Text(tag, style = MaterialTheme.typography.labelSmall) },
+                modifier = Modifier.height(28.dp),
+            )
+        }
+    }
+}
+
+/** rememberSaveable 用の List<String> セーバ（区切り文字で 1 文字列へ）。 */
+private val stringListSaver: androidx.compose.runtime.saveable.Saver<androidx.compose.runtime.MutableState<List<String>>, String> =
+    androidx.compose.runtime.saveable.Saver(
+        save = { it.value.joinToString("\n") },
+        restore = { s ->
+            androidx.compose.runtime.mutableStateOf(
+                if (s.isEmpty()) emptyList() else s.split("\n"),
+            )
+        },
+    )
 
 /** 保存が 0 件のときの中央導線。 */
 @Composable

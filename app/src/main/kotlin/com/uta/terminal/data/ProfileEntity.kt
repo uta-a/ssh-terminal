@@ -31,4 +31,6 @@ data class ProfileEntity(
      * 行内の secret 列は使わない（旧インライン鍵は起動時に鍵ストアへ昇格される）。
      */
     val keyId: String? = null,
+    /** ピン留め（一覧上部に固定）。true が上。 */
+    @ColumnInfo(defaultValue = "0") val pinned: Boolean = false,
 )

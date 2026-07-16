@@ -32,10 +32,15 @@ class AppContainer(app: Application) {
 
     // 接続プロファイル・鍵ストアの永続化（Room）。秘密は Keystore で暗号化して保存する。
     private val database = Room.databaseBuilder(appContext, TerminalDatabase::class.java, "terminal.db")
-        .addMigrations(TerminalDatabase.MIGRATION_1_2, TerminalDatabase.MIGRATION_2_3)
+        .addMigrations(
+            TerminalDatabase.MIGRATION_1_2,
+            TerminalDatabase.MIGRATION_2_3,
+            TerminalDatabase.MIGRATION_3_4,
+        )
         .build()
     val sshKeyRepository = SshKeyRepository(database.sshKeyDao(), database.profileDao())
-    val profileRepository = ProfileRepository(database.profileDao(), sshKeyRepository)
+    val profileRepository =
+        ProfileRepository(database.profileDao(), database.tagDao(), sshKeyRepository)
 
     // アプリ設定（生体認証 ON/OFF 等）。
     val settingsStore = SettingsStore(appContext)
