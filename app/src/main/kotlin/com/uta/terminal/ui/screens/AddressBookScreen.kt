@@ -111,6 +111,8 @@ fun AddressBookScreen(
 ) {
     // 削除確認ダイアログの対象（null＝非表示）。スワイプX・⋮メニューの両経路からここに集約する。
     var confirmDelete by remember { mutableStateOf<HostProfile?>(null) }
+    // 接続確認ダイアログの対象（カード1タップ時。誤タップでの接続を防ぐ）。
+    var confirmConnect by remember { mutableStateOf<HostProfile?>(null) }
     // 検索・タグフィルタ。フィルタ中は並び替えを無効化する（部分リストと全体順のずれ防止）。
     var query by rememberSaveable { mutableStateOf("") }
     val selectedTags = rememberSaveable(saver = stringListSaver) { mutableStateOf(emptyList<String>()) }
@@ -210,7 +212,7 @@ fun AddressBookScreen(
                                 HostRow(
                                     profile = p,
                                     dragging = false,
-                                    onConnect = { onConnect(p) },
+                                    onConnect = { confirmConnect = p },
                                     onNewSession = { onNewSession(p) },
                                     onEdit = { onEdit(p) },
                                     onDuplicate = { onDuplicate(p) },
@@ -269,7 +271,7 @@ fun AddressBookScreen(
                                     .graphicsLayer {
                                         translationY = if (isDragging) dragState.draggingItemOffset else 0f
                                     },
-                                onConnect = { onConnect(p) },
+                                onConnect = { confirmConnect = p },
                                 onNewSession = { onNewSession(p) },
                                 onEdit = { onEdit(p) },
                                 onDuplicate = { onDuplicate(p) },
@@ -281,6 +283,25 @@ fun AddressBookScreen(
                 }
             }
         }
+    }
+
+    // 接続確認。カード1タップの誤操作で接続しないよう確認を挟む。
+    val toConnect = confirmConnect
+    if (toConnect != null) {
+        AlertDialog(
+            onDismissRequest = { confirmConnect = null },
+            title = { Text("接続") },
+            text = { Text("「${toConnect.label}」に接続します。よろしいですか？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onConnect(toConnect)
+                    confirmConnect = null
+                }) { Text("接続") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmConnect = null }) { Text("キャンセル") }
+            },
+        )
     }
 
     // 削除確認。秘密（パスワード/鍵）ごと消えて復元できないため、必ず確認を挟む。
