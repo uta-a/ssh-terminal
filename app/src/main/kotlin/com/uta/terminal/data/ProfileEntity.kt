@@ -1,5 +1,6 @@
 package com.uta.terminal.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -23,4 +24,6 @@ data class ProfileEntity(
     val passIv: ByteArray?,
     val passCipher: ByteArray?,
     val createdAt: Long,
+    /** 一覧の表示順（昇順）。小さいほど上。手動並び替えで更新する。 */
+    @ColumnInfo(defaultValue = "0") val sortOrder: Int = 0,
 )

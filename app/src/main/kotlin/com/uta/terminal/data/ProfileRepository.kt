@@ -48,6 +48,8 @@ class ProfileRepository(private val dao: ProfileDao) {
         val sealedSecret = SecretStore.encrypt(secretPlain.toByteArray(Charsets.UTF_8))
         val sealedPass = passPlain?.takeIf { it.isNotEmpty() }
             ?.let { SecretStore.encrypt(it.toByteArray(Charsets.UTF_8)) }
+        // 新規は一覧の先頭に出す（既存の最小 sortOrder より 1 小さくする）。
+        val sortOrder = (dao.minSortOrder() ?: 0) - 1
         dao.upsert(
             ProfileEntity(
                 id = id,
@@ -61,12 +63,18 @@ class ProfileRepository(private val dao: ProfileDao) {
                 passIv = sealedPass?.iv,
                 passCipher = sealedPass?.ciphertext,
                 createdAt = System.currentTimeMillis(),
+                sortOrder = sortOrder,
             ),
         )
         id
     }
 
     suspend fun delete(id: String) = withContext(Dispatchers.IO) { dao.delete(id) }
+
+    /** 一覧の並び順を永続化する（渡した id 順に sortOrder=0,1,2… を振る）。 */
+    suspend fun reorder(orderedIds: List<String>) = withContext(Dispatchers.IO) {
+        orderedIds.forEachIndexed { index, id -> dao.updateSortOrder(id, index) }
+    }
 
     /** 保存済み秘密を復号して認証情報を組み立てる。存在しなければ null。 */
     suspend fun resolveAuth(id: String): SshAuth? = withContext(Dispatchers.IO) {
