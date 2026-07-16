@@ -143,8 +143,8 @@ private fun AppRoot(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val sessions by sessionManager.sessions.collectAsState()
-    // 下タブの並び順設定（true でホストを先頭に）。
-    val hostTabFirst by settingsStore.hostTabFirst.collectAsState(initial = false)
+    // 下タブの並び順設定（既定はホスト先頭、true でセッションを先頭に）。
+    val sessionsTabFirst by settingsStore.sessionsTabFirst.collectAsState(initial = false)
 
     // 起動タブは状況で切替：生存セッションがあれば「セッション」、無ければ「ホスト」。
     val startTab = remember {
@@ -207,12 +207,12 @@ private fun AppRoot(
                             label = { Text("ホスト") },
                         )
                     }
-                    if (hostTabFirst) {
-                        hostsItem()
+                    if (sessionsTabFirst) {
                         sessionsItem()
+                        hostsItem()
                     } else {
-                        sessionsItem()
                         hostsItem()
+                        sessionsItem()
                     }
                     NavigationBarItem(
                         selected = currentRoute == Routes.SETTINGS,
@@ -375,9 +375,9 @@ private fun AppRoot(
                     onBiometricChange = { enabled ->
                         scope.launch { settingsStore.setBiometricEnabled(enabled) }
                     },
-                    hostTabFirst = hostTabFirst,
-                    onHostTabFirstChange = { enabled ->
-                        scope.launch { settingsStore.setHostTabFirst(enabled) }
+                    sessionsTabFirst = sessionsTabFirst,
+                    onSessionsTabFirstChange = { enabled ->
+                        scope.launch { settingsStore.setSessionsTabFirst(enabled) }
                     },
                     onOpenKeys = { navController.navigate(Routes.KEYS) },
                 )

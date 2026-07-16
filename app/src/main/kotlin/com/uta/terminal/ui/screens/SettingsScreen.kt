@@ -30,8 +30,8 @@ import androidx.compose.ui.unit.dp
 fun SettingsScreen(
     biometricEnabled: Boolean,
     onBiometricChange: (Boolean) -> Unit,
-    hostTabFirst: Boolean,
-    onHostTabFirstChange: (Boolean) -> Unit,
+    sessionsTabFirst: Boolean,
+    onSessionsTabFirstChange: (Boolean) -> Unit,
     onOpenKeys: () -> Unit,
     onBack: (() -> Unit)? = null,
 ) {
@@ -63,15 +63,15 @@ fun SettingsScreen(
                 headlineContent = { Text("タブの並びを入れ替え") },
                 supportingContent = {
                     Text(
-                        if (hostTabFirst) {
-                            "下タブ：ホスト / セッション / 設定"
-                        } else {
+                        if (sessionsTabFirst) {
                             "下タブ：セッション / ホスト / 設定"
+                        } else {
+                            "下タブ：ホスト / セッション / 設定"
                         },
                     )
                 },
                 trailingContent = {
-                    Switch(checked = hostTabFirst, onCheckedChange = onHostTabFirstChange)
+                    Switch(checked = sessionsTabFirst, onCheckedChange = onSessionsTabFirstChange)
                 },
             )
 

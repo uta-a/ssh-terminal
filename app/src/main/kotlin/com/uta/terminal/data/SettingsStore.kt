@@ -23,16 +23,16 @@ class SettingsStore(private val context: Context) {
         context.dataStore.edit { it[KEY_BIOMETRIC] = enabled }
     }
 
-    /** true なら下タブを「ホスト / セッション / 設定」に入れ替える（既定は「セッション / ホスト / 設定」）。 */
-    val hostTabFirst: Flow<Boolean> =
-        context.dataStore.data.map { it[KEY_HOST_TAB_FIRST] ?: false }
+    /** true なら下タブを「セッション / ホスト / 設定」に入れ替える（既定は「ホスト / セッション / 設定」）。 */
+    val sessionsTabFirst: Flow<Boolean> =
+        context.dataStore.data.map { it[KEY_SESSIONS_TAB_FIRST] ?: false }
 
-    suspend fun setHostTabFirst(enabled: Boolean) {
-        context.dataStore.edit { it[KEY_HOST_TAB_FIRST] = enabled }
+    suspend fun setSessionsTabFirst(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_SESSIONS_TAB_FIRST] = enabled }
     }
 
     private companion object {
         val KEY_BIOMETRIC = booleanPreferencesKey("biometric_enabled")
-        val KEY_HOST_TAB_FIRST = booleanPreferencesKey("host_tab_first")
+        val KEY_SESSIONS_TAB_FIRST = booleanPreferencesKey("sessions_tab_first")
     }
 }
