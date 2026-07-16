@@ -107,6 +107,8 @@ private fun renderScreen(
     for (row in 0 until rows) {
         val internal = screen.externalToInternalRow(row)
         val line = screen.allocateFullLineIfNecessary(internal)
+        // 空行（印字文字なし）は既定背景で透過するので走査ごとスキップし、毎フレームの負荷を下げる。
+        if (line.spaceUsed == 0) continue
         val text = line.mText
         var prevIdx = -1
         val topY = row * cellH

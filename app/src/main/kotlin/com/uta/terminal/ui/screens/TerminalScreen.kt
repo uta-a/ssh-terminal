@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
@@ -22,13 +23,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -36,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,7 +58,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
@@ -58,6 +65,7 @@ import com.uta.terminal.terminal.EmulatorHost
 import com.uta.terminal.terminal.LocalEchoTransport
 import com.uta.terminal.terminal.TerminalCanvas
 import com.uta.terminal.terminal.TerminalPalette
+import kotlinx.coroutines.delay
 
 /**
  * 端末ホーム画面。PoC ではローカルエコー Transport で `TerminalEmulator` を駆動し、
@@ -74,12 +82,27 @@ fun TerminalScreen(
     val host = remember(transport) { EmulatorHost(80, 24, transport) }
     var stickyCtrl by remember { mutableStateOf(false) }
     var stickyAlt by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val density = LocalDensity.current
     // ソフトキーボードが出ているか（補助キー行の表示可否に使う）。
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
 
+    // 出力ストリーム中（＝frame が更新され続けている間）はローディング表示にする。
+    var running by remember { mutableStateOf(false) }
+    LaunchedEffect(host.frame) {
+        running = true
+        delay(500)
+        running = false
+    }
+
     fun clearSticky() { stickyCtrl = false; stickyAlt = false }
+    fun disconnect() {
+        menuOpen = false
+        val msg = "\r\n\u001b[31m[セッションを切断しました]\u001b[0m\r\n"
+        val b = msg.toByteArray(Charsets.UTF_8)
+        host.feed(b, b.size)
+    }
 
     Scaffold(
         // インセットは content 側で扱う（補助キー行をキーボード上端へアンカーするため）。
@@ -103,6 +126,17 @@ fun TerminalScreen(
                         Icon(Icons.Filled.Menu, contentDescription = "メニュー")
                     }
                 },
+                actions = {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "その他")
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("セッションを切断") },
+                            onClick = { disconnect() },
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
@@ -119,6 +153,20 @@ fun TerminalScreen(
                 // キーボード表示時はこの padding が持ち上がり、補助キー行がキーボード上端に載る。
                 .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime)),
         ) {
+            // 上部アクセントライン：実行中（出力ストリーム中）はローディングアニメ、待機中は静的な細線。
+            if (running) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .background(MaterialTheme.colorScheme.primary),
+                )
+            }
+
             Surface(
                 modifier = Modifier
                     .weight(1f)
@@ -137,36 +185,54 @@ fun TerminalScreen(
                             .padding(12.dp),
                     )
                     // 透明な入力フィールド：タップでキーボード表示、テキスト/Enter/Backspace を捕捉する。
-                    // Canvas は編集器ではないため IME を開けない。差分検出用に anchor 文字を常に保持する。
+                    // Canvas は編集器ではないため IME を開けない。フリック等の日本語入力にも対応するため
+                    // 通常キーボード型にし、IME の「変換確定」した文字だけを端末へ送る（合成中は送らない）。
                     var tfv by remember {
                         mutableStateOf(TextFieldValue(INPUT_ANCHOR, TextRange(INPUT_ANCHOR.length)))
                     }
-                    BasicTextField(
-                        value = tfv,
-                        onValueChange = { nv ->
-                            diffAndSend(tfv.text, nv.text, host, stickyCtrl, stickyAlt)
-                            clearSticky()
-                            // 通常は IME と同期を保つため値を維持（リセットしない）。
-                            // anchor を失った（先頭まで消した）か肥大化したときだけ anchor へ正規化。
-                            tfv = if (nv.text.startsWith(INPUT_ANCHOR) && nv.text.length <= 512) {
-                                nv
-                            } else {
-                                TextFieldValue(INPUT_ANCHOR, TextRange(INPUT_ANCHOR.length))
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .focusRequester(focusRequester),
-                        textStyle = TextStyle(color = Color.Transparent),
-                        cursorBrush = SolidColor(Color.Transparent),
-                        // パスワード型にすると IME の変換・サジェストが無効になり、
-                        // ローマ字変換されず生の ASCII が直接 commit される（端末入力の定石）。
-                        keyboardOptions = KeyboardOptions(
-                            autoCorrectEnabled = false,
-                            keyboardType = KeyboardType.Password,
-                            imeAction = ImeAction.None,
-                        ),
+                    // 前回までに端末へ送った「確定済みテキスト」（anchor を含む）。
+                    var committedSoFar by remember { mutableStateOf(INPUT_ANCHOR) }
+
+                    // カーソル・選択ハンドルを透明化（左上に出るカーソルを消す）。
+                    val transparentSelection = TextSelectionColors(
+                        handleColor = Color.Transparent,
+                        backgroundColor = Color.Transparent,
                     )
+                    CompositionLocalProvider(LocalTextSelectionColors provides transparentSelection) {
+                        BasicTextField(
+                            value = tfv,
+                            onValueChange = { nv ->
+                                // 合成（変換）中の範囲は未確定。確定済み部分だけを対象に差分送出する。
+                                val comp = nv.composition
+                                val committedEnd =
+                                    if (comp != null && comp.length > 0) comp.start else nv.text.length
+                                val committed = nv.text.substring(0, committedEnd.coerceIn(0, nv.text.length))
+                                diffAndSend(committedSoFar, committed, host, stickyCtrl, stickyAlt)
+                                clearSticky()
+                                committedSoFar = committed
+
+                                // IME とのデシンクを避けるため通常はフィールドを維持（リセットしない）。
+                                // 空になった時だけ anchor を再シードして backspace を継続可能に保ち、
+                                // 合成なしで肥大化した時だけ縮約する。
+                                if (nv.text.isEmpty() || (comp == null && nv.text.length > 256)) {
+                                    tfv = TextFieldValue(INPUT_ANCHOR, TextRange(INPUT_ANCHOR.length))
+                                    committedSoFar = INPUT_ANCHOR
+                                } else {
+                                    tfv = nv
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .focusRequester(focusRequester),
+                            textStyle = TextStyle(color = Color.Transparent),
+                            cursorBrush = SolidColor(Color.Transparent),
+                            // フリック/日本語入力を許可（変換確定分のみ送出する方式）。
+                            keyboardOptions = KeyboardOptions(
+                                autoCorrectEnabled = false,
+                                imeAction = ImeAction.None,
+                            ),
+                        )
+                    }
                 }
             }
 
