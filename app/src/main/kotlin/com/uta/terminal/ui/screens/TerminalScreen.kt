@@ -6,8 +6,8 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,7 +31,6 @@ import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -48,9 +47,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -68,25 +68,25 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import com.uta.terminal.core.model.SessionState
 import com.uta.terminal.terminal.EmulatorHost
-import com.uta.terminal.terminal.LocalEchoTransport
 import com.uta.terminal.terminal.TerminalCanvas
 import com.uta.terminal.terminal.TerminalPalette
 import kotlin.math.roundToInt
 
 /**
- * 端末ホーム画面。PoC ではローカルエコー Transport で `TerminalEmulator` を駆動し、
- * 浮きカードの中に自作 Compose Canvas（[TerminalCanvas]）で描画する。
+ * 端末ホーム画面。アクティブセッションの [EmulatorHost] を [SessionController] から受け取り、
+ * 浮きカードの中に自作 Compose Canvas（[TerminalCanvas]）で描画する。未接続なら空状態を出す。
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun TerminalScreen(
+    host: EmulatorHost?,
     currentSessionLabel: String?,
+    state: SessionState,
     onOpenDrawer: () -> Unit,
+    onDisconnect: () -> Unit,
 ) {
-    val transport = remember { LocalEchoTransport() }
-    // host は一度だけ生成する。初期サイズは仮値で、実測後に onSizeChanged で resize する。
-    val host = remember(transport) { EmulatorHost(80, 24, transport) }
     var stickyCtrl by remember { mutableStateOf(false) }
     var stickyAlt by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -94,23 +94,33 @@ fun TerminalScreen(
     var inputTfv by remember { mutableStateOf(TextFieldValue("")) }
     // 端末フォントの表示倍率（ピンチで拡縮、⋮ メニューでリセット）。
     var fontScale by remember { mutableFloatStateOf(1f) }
+    // 履歴スクロール量（行）。0＝最新（ライブ画面）。上方向ドラッグで増える。
+    var scrollOffset by remember { mutableIntStateOf(0) }
+    // ドラッグ px の端数を持ち越して行換算する。
+    var scrollAccumPx by remember { mutableFloatStateOf(0f) }
+    // TerminalCanvas が報告するセル高（px→行の換算に使う）。
+    var cellHeightPx by remember { mutableFloatStateOf(1f) }
     val focusRequester = remember { FocusRequester() }
     val density = LocalDensity.current
-    // ソフトキーボードが出ているか（補助キー行の表示可否に使う）。アニメの途中値ではなく
-    // 最終目標値（imeAnimationTarget）で判定し、キーボード位置へスライドせず即スナップさせる。
+    // ソフトキーボードが出ているか。アニメの途中値でなく最終目標値で判定し、即スナップさせる。
     val imeVisible = WindowInsets.imeAnimationTarget.getBottom(density) > 0
 
-    // 上部アクセントラインのローディング表示。SSH 先でコマンド実行中のみ true にする想定。
-    // 入力（ローカルエコー）では光らせない。TODO: SSH 実装時に実行状態と接続する。
-    @Suppress("UNUSED")
-    val running by remember { mutableStateOf(false) }
+    // 上部アクセントラインのローディング：接続確立中（Connecting/Reconnecting）に光らせる。
+    val connecting = state is SessionState.Connecting || state is SessionState.Reconnecting
 
-    fun clearSticky() { stickyCtrl = false; stickyAlt = false }
-    fun disconnect() {
-        menuOpen = false
-        val msg = "\r\n\u001b[31m[セッションを切断しました]\u001b[0m\r\n"
-        val b = msg.toByteArray(Charsets.UTF_8)
-        host.feed(b, b.size)
+    // 出力で履歴が伸びたとき、スクロール位置（表示中の行）を保持する。最新表示中(0)は追従して最新のまま。
+    DisposableEffect(host) {
+        val h = host ?: return@DisposableEffect onDispose {}
+        var lastRows = h.activeRows
+        h.onContentChanged = {
+            val now = h.activeRows
+            val delta = now - lastRows
+            lastRows = now
+            if (scrollOffset > 0 && delta > 0) {
+                scrollOffset = (scrollOffset + delta).coerceIn(0, h.activeTranscriptRows)
+            }
+        }
+        onDispose { h.onContentChanged = null }
     }
 
     Scaffold(
@@ -120,14 +130,14 @@ fun TerminalScreen(
             TopAppBar(
                 title = {
                     androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
-                        // 接続状態インジケータ（Dynamic Color の primary を効かせるアクセント）。
+                        // 接続状態インジケータ。状態に応じて色を変える。
                         Box(
                             modifier = Modifier
                                 .size(9.dp)
-                                .background(MaterialTheme.colorScheme.primary, CircleShape),
+                                .background(statusColor(state), CircleShape),
                         )
                         Spacer(Modifier.width(10.dp))
-                        Text(currentSessionLabel ?: "ローカルエコー (PoC)")
+                        Text(currentSessionLabel ?: "未接続")
                     }
                 },
                 navigationIcon = {
@@ -153,7 +163,8 @@ fun TerminalScreen(
                         HorizontalDivider()
                         DropdownMenuItem(
                             text = { Text("セッションを切断") },
-                            onClick = { disconnect() },
+                            enabled = host != null,
+                            onClick = { menuOpen = false; onDisconnect() },
                         )
                     }
                 },
@@ -169,12 +180,10 @@ fun TerminalScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = padding.calculateTopPadding())
-                // 下端はナビゲーションバーと IME の大きい方に合わせる。
-                // キーボード表示時はこの padding が持ち上がり、補助キー行がキーボード上端に載る。
                 .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.imeAnimationTarget)),
         ) {
-            // 上部アクセントライン：実行中（出力ストリーム中）はローディングアニメ、待機中は静的な細線。
-            if (running) {
+            // 上部アクセントライン：接続確立中はローディングアニメ、それ以外は静的な細線。
+            if (connecting) {
                 LinearProgressIndicator(
                     modifier = Modifier.fillMaxWidth().height(3.dp),
                 )
@@ -187,113 +196,162 @@ fun TerminalScreen(
                 )
             }
 
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 12.dp),
-                shape = RoundedCornerShape(18.dp),
-                // 端末カードは参照デザインの calm な地色。周囲クロムの Dynamic Color とは分離する。
-                color = androidx.compose.ui.graphics.Color(TerminalPalette.BACKGROUND),
-                shadowElevation = 2.dp,
-            ) {
-                Box(
+            if (host == null) {
+                EmptyState(modifier = Modifier.weight(1f).fillMaxWidth())
+            } else {
+                Surface(
                     modifier = Modifier
-                        .fillMaxSize()
-                        // 2 本指ピンチで表示倍率を変更する。倍率は 0.5〜3.0 倍にクランプ。
-                        // 親 Box に置くことで、透明入力フィールドのタップ（キーボード表示）は素通しし、
-                        // ピンチ（zoom≠1）のときだけ倍率を更新する。
-                        .pointerInput(Unit) {
-                            detectTransformGestures { _, _, zoom, _ ->
-                                if (zoom != 1f) {
-                                    fontScale = (fontScale * zoom).coerceIn(0.5f, 3.0f)
-                                }
-                            }
-                        },
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    color = Color(TerminalPalette.BACKGROUND),
+                    shadowElevation = 2.dp,
                 ) {
-                    // 既定文字色＝もとの Material You 色（primary）。変換確定したインライン文字も、
-                    // 送信して端末に出た文字もこの色で描く（確定=送信で同色に落ち着く）。
-                    val baseFgArgb = MaterialTheme.colorScheme.primary.toArgb()
-                    // 入力中（IME 変換中）だけ primary を白へ寄せて明るくし、目立たせる。
-                    val composingColorArgb = lerp(
-                        MaterialTheme.colorScheme.primary,
-                        Color.White,
-                        0.62f,
-                    ).toArgb()
-                    // IME 変換中（未確定）の範囲。変換確定でこの範囲が消え、色が既定色へ落ち着く。
-                    val composition = inputTfv.composition
-                    TerminalCanvas(
-                        host = host,
-                        pendingInput = inputTfv.text,
-                        composingStart = composition?.start ?: -1,
-                        composingEnd = composition?.end ?: -1,
-                        defaultFgArgb = baseFgArgb,
-                        composingColorArgb = composingColorArgb,
-                        fontScale = fontScale,
-                        allowResize = !imeVisible,
+                    Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(12.dp),
-                    )
-                    // 透明な入力フィールド：タップでキーボード表示。入力中の文字（IME 変換含む）は
-                    // フィールドが保持し、Canvas がカーソル位置にインライン表示する。Enter で 1 行を送信。
-                    // カーソル・選択ハンドルは透明化（左上に出るカーソルを消す）。
-                    val transparentSelection = TextSelectionColors(
-                        handleColor = Color.Transparent,
-                        backgroundColor = Color.Transparent,
-                    )
-                    CompositionLocalProvider(LocalTextSelectionColors provides transparentSelection) {
-                        BasicTextField(
-                            value = inputTfv,
-                            onValueChange = { inputTfv = it },
+                            // 2 本指ピンチで表示倍率、縦ドラッグで履歴スクロール。親 Box に置くことで
+                            // 透明入力フィールドのタップ（キーボード表示）は素通しし、移動時のみ消費する。
+                            .pointerInput(Unit) {
+                                detectTransformGestures { _, pan, zoom, _ ->
+                                    if (zoom != 1f) {
+                                        fontScale = (fontScale * zoom).coerceIn(0.5f, 3.0f)
+                                    }
+                                    if (pan.y != 0f && cellHeightPx > 0f) {
+                                        // 下ドラッグ（pan.y>0）で過去へ、上ドラッグで最新へ。
+                                        scrollAccumPx += pan.y
+                                        val step = (scrollAccumPx / cellHeightPx).toInt()
+                                        if (step != 0) {
+                                            scrollAccumPx -= step * cellHeightPx
+                                            val max = host.activeTranscriptRows
+                                            scrollOffset = (scrollOffset + step).coerceIn(0, max)
+                                        }
+                                    }
+                                }
+                            },
+                    ) {
+                        // 既定文字色＝もとの Material You 色（primary）。確定インラインも送信後の端末出力も同色。
+                        val baseFgArgb = MaterialTheme.colorScheme.primary.toArgb()
+                        // 入力中（IME 変換中）だけ primary を白へ寄せて明るくし、目立たせる。
+                        val composingColorArgb = lerp(
+                            MaterialTheme.colorScheme.primary,
+                            Color.White,
+                            0.62f,
+                        ).toArgb()
+                        val composition = inputTfv.composition
+                        TerminalCanvas(
+                            host = host,
+                            pendingInput = inputTfv.text,
+                            composingStart = composition?.start ?: -1,
+                            composingEnd = composition?.end ?: -1,
+                            defaultFgArgb = baseFgArgb,
+                            composingColorArgb = composingColorArgb,
+                            fontScale = fontScale,
+                            scrollOffset = scrollOffset,
+                            onCellHeight = { cellHeightPx = it },
                             modifier = Modifier
                                 .fillMaxSize()
-                                .focusRequester(focusRequester),
-                            textStyle = TextStyle(color = Color.Transparent),
-                            cursorBrush = SolidColor(Color.Transparent),
-                            singleLine = true,
-                            // フリック等の日本語入力を許可。Enter（Go）で行を確定送信する。
-                            keyboardOptions = KeyboardOptions(
-                                autoCorrectEnabled = false,
-                                imeAction = ImeAction.Go,
-                            ),
-                            keyboardActions = KeyboardActions(
-                                onGo = {
-                                    val line = inputTfv.text
-                                    val bytes = (line + "\r").toByteArray(Charsets.UTF_8)
-                                    host.sendBytes(bytes)
-                                    inputTfv = TextFieldValue("")
-                                },
-                            ),
+                                .padding(12.dp),
                         )
+                        // 透明な入力フィールド：タップでキーボード表示。入力中の文字（IME 変換含む）は
+                        // フィールドが保持し、Canvas がカーソル位置にインライン表示する。Enter で 1 行を送信。
+                        val transparentSelection = TextSelectionColors(
+                            handleColor = Color.Transparent,
+                            backgroundColor = Color.Transparent,
+                        )
+                        CompositionLocalProvider(LocalTextSelectionColors provides transparentSelection) {
+                            BasicTextField(
+                                value = inputTfv,
+                                onValueChange = { inputTfv = it },
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .focusRequester(focusRequester),
+                                textStyle = TextStyle(color = Color.Transparent),
+                                cursorBrush = SolidColor(Color.Transparent),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(
+                                    autoCorrectEnabled = false,
+                                    imeAction = ImeAction.Go,
+                                ),
+                                keyboardActions = KeyboardActions(
+                                    onGo = {
+                                        val bytes = (inputTfv.text + "\r").toByteArray(Charsets.UTF_8)
+                                        host.sendBytes(bytes)
+                                        inputTfv = TextFieldValue("")
+                                        // 送信したら最新へ戻す。
+                                        scrollOffset = 0; scrollAccumPx = 0f
+                                    },
+                                ),
+                            )
+                        }
+
+                        // 履歴を遡っているときだけ「最新へ」ボタンを右下に出す。
+                        if (scrollOffset > 0) {
+                            FilledTonalButton(
+                                onClick = { scrollOffset = 0; scrollAccumPx = 0f },
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(12.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                    horizontal = 14.dp,
+                                    vertical = 8.dp,
+                                ),
+                            ) {
+                                Text("最新へ ▼")
+                            }
+                        }
                     }
                 }
-            }
 
-            // 補助キー行はキーボードが開いているときだけ表示する。
-            if (imeVisible) {
-                ExtraKeysRow(
-                    stickyCtrl = stickyCtrl,
-                    stickyAlt = stickyAlt,
-                    onToggleCtrl = { stickyCtrl = !stickyCtrl },
-                    onToggleAlt = { stickyAlt = !stickyAlt },
-                    onKey = { action -> action(host); focusRequester.requestFocus() },
-                )
+                // 補助キー行はキーボードが開いているときだけ表示する。
+                if (imeVisible) {
+                    ExtraKeysRow(
+                        stickyCtrl = stickyCtrl,
+                        stickyAlt = stickyAlt,
+                        onToggleCtrl = { stickyCtrl = !stickyCtrl },
+                        onToggleAlt = { stickyAlt = !stickyAlt },
+                        onKey = { action ->
+                            action(host); focusRequester.requestFocus()
+                            scrollOffset = 0; scrollAccumPx = 0f
+                        },
+                    )
+                }
             }
         }
     }
+}
 
-    LaunchedEffect(Unit) {
-        // 描画・ANSI 色・ワイド文字を一目で検証できる初期バナー（stdout 相当として流し込む）。
-        val banner = "\u001b[1;32mTerminal PoC\u001b[0m — ローカルエコー\r\n" +
-            "\u001b[36mcyan\u001b[0m \u001b[33myellow\u001b[0m \u001b[31mred\u001b[0m 日本語ワイド文字\r\n" +
-            "文字を入力するとエコーされます。\r\n$ "
-        val bytes = banner.toByteArray(Charsets.UTF_8)
-        host.feed(bytes, bytes.size)
+/** 接続状態を表すドット色。 */
+@Composable
+private fun statusColor(state: SessionState): Color = when (state) {
+    is SessionState.Connected -> Color(0xFF4CAF50)
+    is SessionState.Connecting, is SessionState.Reconnecting -> MaterialTheme.colorScheme.tertiary
+    is SessionState.Failed -> MaterialTheme.colorScheme.error
+    is SessionState.Disconnected -> MaterialTheme.colorScheme.onSurfaceVariant
+}
+
+/** 未接続時の空状態。 */
+@Composable
+private fun EmptyState(modifier: Modifier = Modifier) {
+    Box(modifier = modifier.padding(24.dp), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                "接続がありません",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "左上のメニュー →「新規セッション」から接続してください",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
-/** キーボード上端相当に置く補助キー行（PoC 版。Ctrl/Alt は sticky トグル）。 */
+/** キーボード上端相当に置く補助キー行（Ctrl/Alt は sticky トグル）。 */
 @Composable
 private fun ExtraKeysRow(
     stickyCtrl: Boolean,
@@ -303,7 +361,6 @@ private fun ExtraKeysRow(
     onKey: ((EmulatorHost) -> Unit) -> Unit,
 ) {
     val scroll = rememberScrollState()
-    // Dynamic Color を効かせる tonal なバー。
     Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
         androidx.compose.foundation.layout.Row(
             modifier = Modifier

@@ -91,6 +91,10 @@ dependencies {
     // Termux 端末エミュレータ（解析のみ利用。描画は自作）。
     implementation(libs.termux.terminal.emulator)
 
+    // sshj が runtime スコープで持ち込む BouncyCastle を、Android 用のプロバイダ差し替えで
+    // コード参照するためコンパイル依存として明示する。
+    implementation(libs.bouncycastle.bcprov)
+
     debugImplementation(libs.androidx.ui.tooling)
 
     testImplementation(libs.junit)

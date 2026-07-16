@@ -35,7 +35,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.uta.terminal.core.session.SessionInfo
 import com.uta.terminal.core.session.SessionManager
+import com.uta.terminal.core.ssh.SshConnectionRequest
+import com.uta.terminal.data.ProfileRepository
+import com.uta.terminal.session.SessionController
 import com.uta.terminal.ui.screens.AddressBookScreen
+import com.uta.terminal.ui.screens.ConnectScreen
 import com.uta.terminal.ui.screens.SettingsScreen
 import com.uta.terminal.ui.screens.TerminalScreen
 import com.uta.terminal.ui.theme.TerminalTheme
@@ -48,7 +52,7 @@ class MainActivity : ComponentActivity() {
         val container = (application as TerminalApp).container
         setContent {
             TerminalTheme {
-                AppRoot(container.sessionManager)
+                AppRoot(container.sessionManager, container.sessionController, container.profileRepository)
             }
         }
     }
@@ -57,16 +61,20 @@ class MainActivity : ComponentActivity() {
 private object Routes {
     const val TERMINAL = "terminal"
     const val ADDRESS_BOOK = "address_book"
+    const val CONNECT = "connect"
     const val SETTINGS = "settings"
 }
 
 @Composable
-private fun AppRoot(sessionManager: SessionManager) {
+private fun AppRoot(
+    sessionManager: SessionManager,
+    sessionController: SessionController,
+    profileRepository: ProfileRepository,
+) {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val sessions by sessionManager.sessions.collectAsState()
-    val activeId by sessionManager.activeId.collectAsState()
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -90,14 +98,44 @@ private fun AppRoot(sessionManager: SessionManager) {
     ) {
         NavHost(navController = navController, startDestination = Routes.TERMINAL) {
             composable(Routes.TERMINAL) {
-                val activeLabel = sessions.firstOrNull { it.id == activeId }?.label
                 TerminalScreen(
-                    currentSessionLabel = activeLabel,
+                    host = sessionController.host,
+                    currentSessionLabel = sessionController.label,
+                    state = sessionController.state,
                     onOpenDrawer = { scope.launch { drawerState.open() } },
+                    onDisconnect = { sessionController.disconnect() },
                 )
             }
             composable(Routes.ADDRESS_BOOK) {
-                AddressBookScreen(onBack = { navController.popBackStack() })
+                val profiles by profileRepository.profiles.collectAsState(initial = emptyList())
+                AddressBookScreen(
+                    profiles = profiles,
+                    onBack = { navController.popBackStack() },
+                    onAddNew = { navController.navigate(Routes.CONNECT) },
+                    onConnect = { profile ->
+                        scope.launch {
+                            val auth = profileRepository.resolveAuth(profile.id) ?: return@launch
+                            val req = SshConnectionRequest(
+                                profile.host, profile.port, profile.username, auth, cols = 80, rows = 24,
+                            )
+                            sessionController.connect(req, profile.label)
+                            navController.popBackStack(Routes.TERMINAL, inclusive = false)
+                        }
+                    },
+                    onDelete = { id -> scope.launch { profileRepository.delete(id) } },
+                )
+            }
+            composable(Routes.CONNECT) {
+                ConnectScreen(
+                    onBack = { navController.popBackStack() },
+                    onConnect = { req, label, save ->
+                        if (save) scope.launch {
+                            profileRepository.save(label, req.host, req.port, req.username, req.auth)
+                        }
+                        sessionController.connect(req, label)
+                        navController.popBackStack(Routes.TERMINAL, inclusive = false)
+                    },
+                )
             }
             composable(Routes.SETTINGS) {
                 SettingsScreen(onBack = { navController.popBackStack() })

@@ -14,6 +14,9 @@ interface Transport {
     /** 受信バイトを上流（エミュレータ）へ渡すコールバックを登録する。 */
     fun setOnReceive(onReceive: (ByteArray, Int) -> Unit)
 
+    /** 端末サイズ変更を下流（リモート PTY）へ通知する。既定は無視（ローカルエコー等）。 */
+    fun resize(cols: Int, rows: Int) {}
+
     fun close()
 }
 

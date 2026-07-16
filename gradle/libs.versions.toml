@@ -13,6 +13,7 @@ datastore = "1.1.1"
 serialization = "1.7.3"
 biometric = "1.1.0"
 sshj = "0.39.0"
+bouncycastle = "1.78.1"
 termux = "0.118.0"
 junit = "4.13.2"
 androidxJunit = "1.2.1"
@@ -40,6 +41,9 @@ kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
 sshj = { group = "com.hierynomus", name = "sshj", version.ref = "sshj" }
+# sshj は bcprov を runtime スコープで宣言するため、Android で本物の BC プロバイダを
+# コード参照（差し替え）する :app 側にコンパイル依存として明示する。
+bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 # Termux 端末エミュレータ（バイト→画面バッファ解析）。描画は自作 Compose Canvas で行うため
 # terminal-view は使わず terminal-emulator 単体を利用。PTY を使わないので JNI .so は packaging で除外。
 termux-terminal-emulator = { group = "com.termux.termux-app", name = "terminal-emulator", version.ref = "termux" }

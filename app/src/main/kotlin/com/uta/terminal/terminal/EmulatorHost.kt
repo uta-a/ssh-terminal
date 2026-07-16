@@ -40,6 +40,19 @@ class EmulatorHost(
     /** Compose から購読する再描画トリガ。値が変わると Canvas が引き直される。 */
     val frame: Int get() = frameState.intValue
 
+    /** 現在の端末サイズ（接続確立後の PTY 再同期などに使う）。 */
+    val cols: Int get() = emulator.mColumns
+    val rows: Int get() = emulator.mRows
+
+    /** 履歴（スクロールバック）に積まれている行数。 */
+    val activeTranscriptRows: Int get() = emulator.screen.activeTranscriptRows
+
+    /** 履歴＋画面の総行数。スクロール位置の追従に使う。 */
+    val activeRows: Int get() = emulator.screen.activeRows
+
+    /** 出力でバッファ内容が変化したときの通知（スクロール位置の追従に使う）。メインスレッドで呼ばれる。 */
+    var onContentChanged: (() -> Unit)? = null
+
     init {
         // ビビッドな既定 ANSI 色を calm な muted パレットへ差し替える。
         TerminalPalette.applyTo(emulator.mColors.mCurrentColors)
@@ -49,6 +62,7 @@ class EmulatorHost(
     /** 受信バイト（stdout 相当）をエミュレータへ流し込む。 */
     fun feed(data: ByteArray, length: Int) {
         emulator.append(data, length)
+        onContentChanged?.invoke()
         invalidate()
     }
 
@@ -56,6 +70,8 @@ class EmulatorHost(
         if (columns < 2 || rows < 2) return
         if (columns == emulator.mColumns && rows == emulator.mRows) return
         emulator.resize(columns, rows)
+        // リモート PTY にもウィンドウサイズ変更を通知する（SSH 時は SIGWINCH 相当）。
+        transport.resize(columns, rows)
         invalidate()
     }
 
