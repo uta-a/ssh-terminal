@@ -53,7 +53,13 @@ fun TerminalCanvas(
             Typeface.createFromAsset(context.assets, "fonts/JetBrainsMonoNerdFontMono-Regular.ttf")
         }.getOrDefault(Typeface.MONOSPACE)
     }
-    // Nerd Font にも無い記号（例: ⏵ U+23F5）はシステムフォントの字形にフォールバックして描く。
+    // 記号フォールバック：Nerd Font に無い記号（例: ⏵ U+23F5 等の技術記号/メディア記号）をカバーする
+    // Noto Sans Symbols 2（同梱）。これにも無ければ最後にシステムフォント（CJK 等はここで解決）。
+    val symbolsTypeface = remember {
+        runCatching {
+            Typeface.createFromAsset(context.assets, "fonts/NotoSansSymbols2-Regular.ttf")
+        }.getOrDefault(Typeface.DEFAULT)
+    }
     val fallbackTypeface = remember { Typeface.DEFAULT }
     // 基準 14sp にピンチ操作の倍率を掛けた実サイズ。倍率が変わるとセル寸法も再計算される。
     val textSizePx = with(density) { (14f * fontScale).sp.toPx() }
@@ -108,6 +114,7 @@ fun TerminalCanvas(
                 composingColorArgb = composingColorArgb,
                 scrollOffset = scrollOffset,
                 typeface = typeface,
+                symbolsTypeface = symbolsTypeface,
                 fallbackTypeface = fallbackTypeface,
             )
         }
@@ -116,24 +123,34 @@ fun TerminalCanvas(
 
 private const val TRUECOLOR_MASK = 0xff000000.toInt()
 
-// コードポイントごとに「primary フォントが字形を持つか」をキャッシュ（フォントは固定なので有効）。
-private val glyphInPrimary = HashMap<Int, Boolean>()
+// コードポイントごとに「どの Typeface で描くか」をキャッシュ（フォントは固定なので有効）。
+private val glyphFont = HashMap<Int, Typeface>()
 
 /**
- * 与えたグリフを描くのに使うべき Typeface を返す。primary に字形が無ければ fallback（システム）を返す。
- * ASCII は primary が必ず持つので判定を省く。判定結果は [glyphInPrimary] にキャッシュする。
+ * 与えたグリフを描くのに使うべき Typeface を返す。primary → symbols（記号）→ fallback（システム）の
+ * 順で字形を持つ最初のフォントを選ぶ。ASCII は primary が必ず持つので判定を省く。結果はキャッシュする。
  */
-private fun glyphTypeface(paint: Paint, s: String, primary: Typeface, fallback: Typeface): Typeface {
+private fun glyphTypeface(
+    paint: Paint,
+    s: String,
+    primary: Typeface,
+    symbols: Typeface,
+    fallback: Typeface,
+): Typeface {
     val cp = s.codePointAt(0)
     if (cp <= 0x7F) return primary
-    val has = glyphInPrimary.getOrPut(cp) {
+    return glyphFont.getOrPut(cp) {
         val prev = paint.typeface
         paint.typeface = primary
-        val h = paint.hasGlyph(s)
+        val chosen = if (paint.hasGlyph(s)) {
+            primary
+        } else {
+            paint.typeface = symbols
+            if (paint.hasGlyph(s)) symbols else fallback
+        }
         paint.typeface = prev
-        h
+        chosen
     }
-    return if (has) primary else fallback
 }
 
 private fun renderScreen(
@@ -152,6 +169,7 @@ private fun renderScreen(
     composingColorArgb: Int,
     scrollOffset: Int,
     typeface: Typeface,
+    symbolsTypeface: Typeface,
     fallbackTypeface: Typeface,
 ) {
     val screen = emu.screen
@@ -218,7 +236,7 @@ private fun renderScreen(
                     paint.isFakeBoldText = bold
                     paint.textSkewX = if (italic) -0.25f else 0f
                     paint.isUnderlineText = underline
-                    paint.typeface = glyphTypeface(paint, cp, typeface, fallbackTypeface)
+                    paint.typeface = glyphTypeface(paint, cp, typeface, symbolsTypeface, fallbackTypeface)
                     canvas.drawText(cp, left, topY + baseline, paint)
                     paint.typeface = typeface
                     paint.isFakeBoldText = false
@@ -254,7 +272,7 @@ private fun renderScreen(
             if (caretCol + w > cols) { caretCol = 0; caretRow += 1 }
             if (caretRow in 0 until rows) {
                 val s = String(Character.toChars(cp))
-                paint.typeface = glyphTypeface(paint, s, typeface, fallbackTypeface)
+                paint.typeface = glyphTypeface(paint, s, typeface, symbolsTypeface, fallbackTypeface)
                 canvas.drawText(s, caretCol * cellW, caretRow * cellH + baseline, paint)
                 paint.typeface = typeface
             }
