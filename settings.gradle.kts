@@ -22,6 +22,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Termux terminal-emulator（TerminalEmulator 解析クラス）は JitPack で配布。
+        maven { url = uri("https://jitpack.io") }
     }
 }
 

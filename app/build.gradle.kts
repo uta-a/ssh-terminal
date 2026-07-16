@@ -52,6 +52,12 @@ android {
             excludes += "/META-INF/*.DSA"
             excludes += "/META-INF/*.RSA"
         }
+        jniLibs {
+            // terminal-emulator の JNI は TerminalSession（ローカル PTY）専用。
+            // 本アプリは SSH バイトで TerminalEmulator を駆動し PTY を使わないため不要。
+            excludes += "**/libtermux.so"
+            excludes += "**/liblocal-socket.so"
+        }
     }
 }
 
@@ -81,6 +87,9 @@ dependencies {
 
     // 秘密（鍵・パスワード）の生体認証ゲート。
     implementation(libs.androidx.biometric)
+
+    // Termux 端末エミュレータ（解析のみ利用。描画は自作）。
+    implementation(libs.termux.terminal.emulator)
 
     debugImplementation(libs.androidx.ui.tooling)
 
