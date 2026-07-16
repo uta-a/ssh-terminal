@@ -2,6 +2,7 @@ package com.uta.terminal.ui
 
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,8 +26,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
@@ -109,7 +116,33 @@ fun BiometricGate(enabled: Boolean, content: @Composable () -> Unit) {
 
 @Composable
 private fun LockScreen(onUnlock: () -> Unit) {
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    // 下層の content（端末を含む）は compose されたままなので、ロック中はここで
+    // フォーカス・キー入力・タッチを吸収し、ソフトキーボードも閉じる。
+    // これをしないと、物理/Bluetooth キーボードや IME 再表示時にロック中でも
+    // 下の入力欄へ文字が届き、リモートへ送信され得る（セキュリティ）。
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        keyboard?.hide()
+        runCatching { focusRequester.requestFocus() }
+    }
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            // 全てのキーイベントを奪って消費する（下層の入力欄へ渡さない）。
+            .focusRequester(focusRequester)
+            .focusable()
+            .onPreviewKeyEvent { true }
+            // タッチも消費し、下層のタップ（キーボード表示）を発火させない。
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent().changes.forEach { it.consume() }
+                    }
+                }
+            },
+        color = MaterialTheme.colorScheme.background,
+    ) {
         Box(contentAlignment = Alignment.Center) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
