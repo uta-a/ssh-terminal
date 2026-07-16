@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
@@ -104,6 +105,13 @@ fun BiometricGate(enabled: Boolean, content: @Composable () -> Unit) {
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // ロックに入ったら下層（端末入力欄など）の残留フォーカスを明示的に外す。
+    // LockScreen 側の requestFocus が万一失敗しても、物理/BT キーが端末へ届かないようにする多重防御。
+    val focusManager = LocalFocusManager.current
+    LaunchedEffect(authed) {
+        if (!authed) focusManager.clearFocus(force = true)
     }
 
     // content は常に compose する（再マウントで端末やナビが失われないように）。
