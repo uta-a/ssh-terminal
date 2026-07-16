@@ -34,6 +34,18 @@ class SshForegroundService : Service() {
         return START_STICKY
     }
 
+    /**
+     * Android 14+（dataSync FGS）の累積タイムアウト到達時に呼ばれる。放置すると ANR/強制終了に
+     * なるため、フォアグラウンド常駐だけを解除する。SSH 接続自体は sshj のスレッドが維持するので
+     * 通信は切れない（常駐通知が消えるだけ）。
+     */
+    override fun onTimeout(startId: Int) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        }
+        stopSelf()
+    }
+
     companion object {
         private const val CHANNEL_ID = "ssh_session"
         private const val NOTIF_ID = 1
