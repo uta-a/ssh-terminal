@@ -38,16 +38,7 @@ class ProfileRepository(private val dao: ProfileDao) {
         auth: SshAuth,
     ): String = withContext(Dispatchers.IO) {
         val id = UUID.randomUUID().toString()
-        val kind: String
-        val secretPlain: String
-        val passPlain: String?
-        when (auth) {
-            is SshAuth.Password -> { kind = "PASSWORD"; secretPlain = auth.password; passPlain = null }
-            is SshAuth.PrivateKey -> { kind = "KEY"; secretPlain = auth.pem; passPlain = auth.passphrase }
-        }
-        val sealedSecret = SecretStore.encrypt(secretPlain.toByteArray(Charsets.UTF_8))
-        val sealedPass = passPlain?.takeIf { it.isNotEmpty() }
-            ?.let { SecretStore.encrypt(it.toByteArray(Charsets.UTF_8)) }
+        val sealed = seal(auth)
         // 新規は一覧の先頭に出す（既存の最小 sortOrder より 1 小さくする）。
         val sortOrder = (dao.minSortOrder() ?: 0) - 1
         dao.upsert(
@@ -57,16 +48,66 @@ class ProfileRepository(private val dao: ProfileDao) {
                 host = host,
                 port = port,
                 username = username,
-                authKind = kind,
-                secretIv = sealedSecret.iv,
-                secretCipher = sealedSecret.ciphertext,
-                passIv = sealedPass?.iv,
-                passCipher = sealedPass?.ciphertext,
+                authKind = sealed.kind,
+                secretIv = sealed.secretIv,
+                secretCipher = sealed.secretCipher,
+                passIv = sealed.passIv,
+                passCipher = sealed.passCipher,
                 createdAt = System.currentTimeMillis(),
                 sortOrder = sortOrder,
             ),
         )
         id
+    }
+
+    /** 保存済みプロファイルを 1 件取得する（秘密は含まない）。 */
+    suspend fun get(id: String): HostProfile? = withContext(Dispatchers.IO) {
+        dao.getById(id)?.toHostProfile()
+    }
+
+    /**
+     * プロファイルを更新する。[auth] が null のときは秘密を変更せず、非秘密情報だけを更新する
+     * （編集画面で「パスワード/鍵を変更する」を押さなかった場合）。
+     */
+    suspend fun update(
+        id: String,
+        label: String,
+        host: String,
+        port: Int,
+        username: String,
+        auth: SshAuth?,
+    ) = withContext(Dispatchers.IO) {
+        val e = dao.getById(id) ?: return@withContext
+        val updated = if (auth == null) {
+            e.copy(label = label, host = host, port = port, username = username)
+        } else {
+            val sealed = seal(auth)
+            e.copy(
+                label = label,
+                host = host,
+                port = port,
+                username = username,
+                authKind = sealed.kind,
+                secretIv = sealed.secretIv,
+                secretCipher = sealed.secretCipher,
+                passIv = sealed.passIv,
+                passCipher = sealed.passCipher,
+            )
+        }
+        dao.upsert(updated)
+    }
+
+    /** プロファイルを複製する（ラベルに「(コピー)」を付け、一覧の先頭に置く）。秘密ごと複製される。 */
+    suspend fun duplicate(id: String) = withContext(Dispatchers.IO) {
+        val e = dao.getById(id) ?: return@withContext
+        dao.upsert(
+            e.copy(
+                id = UUID.randomUUID().toString(),
+                label = "${e.label} (コピー)",
+                createdAt = System.currentTimeMillis(),
+                sortOrder = (dao.minSortOrder() ?: 0) - 1,
+            ),
+        )
     }
 
     suspend fun delete(id: String) = withContext(Dispatchers.IO) { dao.delete(id) }
@@ -93,6 +134,36 @@ class ProfileRepository(private val dao: ProfileDao) {
             else -> null
         }
     }
+}
+
+/** 暗号化済みの認証情報（Room 行に入れる形）。 */
+private class SealedAuth(
+    val kind: String,
+    val secretIv: ByteArray,
+    val secretCipher: ByteArray,
+    val passIv: ByteArray?,
+    val passCipher: ByteArray?,
+)
+
+/** [SshAuth] を [SecretStore] で暗号化して行形式に変換する。 */
+private fun seal(auth: SshAuth): SealedAuth {
+    val kind: String
+    val secretPlain: String
+    val passPlain: String?
+    when (auth) {
+        is SshAuth.Password -> { kind = "PASSWORD"; secretPlain = auth.password; passPlain = null }
+        is SshAuth.PrivateKey -> { kind = "KEY"; secretPlain = auth.pem; passPlain = auth.passphrase }
+    }
+    val sealedSecret = SecretStore.encrypt(secretPlain.toByteArray(Charsets.UTF_8))
+    val sealedPass = passPlain?.takeIf { it.isNotEmpty() }
+        ?.let { SecretStore.encrypt(it.toByteArray(Charsets.UTF_8)) }
+    return SealedAuth(
+        kind = kind,
+        secretIv = sealedSecret.iv,
+        secretCipher = sealedSecret.ciphertext,
+        passIv = sealedPass?.iv,
+        passCipher = sealedPass?.ciphertext,
+    )
 }
 
 private fun ProfileEntity.toHostProfile() = HostProfile(

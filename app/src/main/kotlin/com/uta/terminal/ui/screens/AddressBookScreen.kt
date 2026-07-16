@@ -29,11 +29,18 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -41,6 +48,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -71,8 +79,10 @@ import kotlin.math.roundToInt
 /**
  * ホスト一覧（アプリのホーム）。保存済み接続先をカードで一覧表示する。
  * - カードタップ：保存済み情報を復号して接続。
+ * - カード右端の ⋮ メニュー：編集 / 複製 / 削除（全操作の見える入口）。
  * - カード長押し＋上下ドラッグ：並び替え（[onReorder] で永続化）。
- * - カード横スワイプ：赤い削除ボタンを表出し、クリックで削除。
+ * - カード横スワイプ：赤い削除ボタンを表出（削除のショートカット）。
+ * - 削除はどの経路でも確認ダイアログを挟む（秘密ごと消え、復元できないため）。
  * - ＋/中央ボタン：新規接続フォームへ。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -81,11 +91,15 @@ fun AddressBookScreen(
     profiles: List<HostProfile>,
     onAddNew: () -> Unit,
     onConnect: (HostProfile) -> Unit,
+    onEdit: (HostProfile) -> Unit,
+    onDuplicate: (HostProfile) -> Unit,
     onDelete: (String) -> Unit,
     onReorder: (List<String>) -> Unit,
     onOpenSettings: () -> Unit,
     onReturnToTerminal: (() -> Unit)? = null,
 ) {
+    // 削除確認ダイアログの対象（null＝非表示）。スワイプX・⋮メニューの両経路からここに集約する。
+    var confirmDelete by remember { mutableStateOf<HostProfile?>(null) }
     // 並び替え中のライブ順を保持するローカル State。**識別子を安定させる**ため remember はキー無しにし、
     // profiles の再発行は LaunchedEffect で中身だけ同期する（DragDropState のクロージャが
     // 初期 emptyList の State を掴んだままにならないようにする＝クラッシュ/未反映の防止）。
@@ -195,11 +209,32 @@ fun AddressBookScreen(
                                 translationY = if (isDragging) dragState.draggingItemOffset else 0f
                             },
                         onConnect = { onConnect(p) },
-                        onDelete = { onDelete(p.id) },
+                        onEdit = { onEdit(p) },
+                        onDuplicate = { onDuplicate(p) },
+                        onDeleteRequest = { confirmDelete = p },
                     )
                 }
             }
         }
+    }
+
+    // 削除確認。秘密（パスワード/鍵）ごと消えて復元できないため、必ず確認を挟む。
+    val toDelete = confirmDelete
+    if (toDelete != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            title = { Text("接続先を削除") },
+            text = { Text("「${toDelete.label}」を削除します。保存されたパスワード/鍵も削除され、元に戻せません。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDelete(toDelete.id)
+                    confirmDelete = null
+                }) { Text("削除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = null }) { Text("キャンセル") }
+            },
+        )
     }
 }
 
@@ -210,13 +245,16 @@ private fun HostRow(
     dragging: Boolean,
     modifier: Modifier = Modifier,
     onConnect: () -> Unit,
-    onDelete: () -> Unit,
+    onEdit: () -> Unit,
+    onDuplicate: () -> Unit,
+    onDeleteRequest: () -> Unit,
 ) {
     val authText = if (profile.authKind == AuthKind.KEY) "鍵" else "パスワード"
     val shape = RoundedCornerShape(12.dp)
     val revealPx = with(LocalDensity.current) { 76.dp.toPx() }
     val offsetX = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
+    var menuOpen by remember { mutableStateOf(false) }
 
     // 並び替えドラッグ開始時はスワイプ表出を閉じておく。
     LaunchedEffect(dragging) { if (dragging) offsetX.animateTo(0f) }
@@ -232,7 +270,7 @@ private fun HostRow(
         ) {
             IconButton(
                 onClick = {
-                    onDelete()
+                    onDeleteRequest()
                     scope.launch { offsetX.animateTo(0f) }
                 },
                 modifier = Modifier.padding(end = 14.dp),
@@ -276,7 +314,7 @@ private fun HostRow(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(20.dp),
+                    .padding(start = 20.dp, end = 8.dp, top = 14.dp, bottom = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
@@ -301,6 +339,49 @@ private fun HostRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                }
+                // 全操作の「見える入口」。ジェスチャー（スワイプ削除・長押し並び替え）は
+                // ショートカット扱いで、ここから編集/複製/削除に必ず到達できる。
+                Box {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(
+                            Icons.Filled.MoreVert,
+                            contentDescription = "メニュー",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("編集") },
+                            leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                onEdit()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("複製") },
+                            leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                onDuplicate()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("削除") },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Delete,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                            },
+                            onClick = {
+                                menuOpen = false
+                                onDeleteRequest()
+                            },
+                        )
+                    }
                 }
             }
         }

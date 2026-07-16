@@ -43,6 +43,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,13 +56,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.uta.terminal.core.model.SessionState
 import com.uta.terminal.core.session.SessionInfo
 import com.uta.terminal.core.session.SessionManager
 import com.uta.terminal.core.ssh.SshConnectionRequest
+import com.uta.terminal.data.HostProfile
 import com.uta.terminal.data.ProfileRepository
 import com.uta.terminal.data.SettingsStore
 import com.uta.terminal.session.SessionController
@@ -110,8 +114,12 @@ class MainActivity : FragmentActivity() {
 private object Routes {
     const val TERMINAL = "terminal"
     const val ADDRESS_BOOK = "address_book"
-    const val CONNECT = "connect"
+    const val CONNECT = "connect?editId={editId}"
     const val SETTINGS = "settings"
+
+    /** 接続フォームへの遷移先。[editId] を渡すと編集モードで開く。 */
+    fun connect(editId: String? = null): String =
+        if (editId != null) "connect?editId=$editId" else "connect"
 }
 
 @Composable
@@ -173,7 +181,11 @@ private fun AppRoot(
                 val profiles by profileRepository.profiles.collectAsState(initial = emptyList())
                 AddressBookScreen(
                     profiles = profiles,
-                    onAddNew = { navController.navigate(Routes.CONNECT) },
+                    onAddNew = { navController.navigate(Routes.connect()) },
+                    onEdit = { profile -> navController.navigate(Routes.connect(profile.id)) },
+                    onDuplicate = { profile ->
+                        scope.launch { profileRepository.duplicate(profile.id) }
+                    },
                     onConnect = { profile ->
                         scope.launch {
                             val auth = try {
@@ -207,21 +219,52 @@ private fun AppRoot(
                     },
                 )
             }
-            composable(Routes.CONNECT) {
-                ConnectScreen(
-                    onBack = { navController.popBackStack() },
-                    onConnect = { req, label, save ->
-                        if (save) scope.launch {
-                            profileRepository.save(label, req.host, req.port, req.username, req.auth)
-                        }
-                        sessionController.connect(req, label)
-                        // CONNECT を積み残さず、戻るでホスト一覧へ戻す。
-                        navController.navigate(Routes.TERMINAL) {
-                            popUpTo(Routes.ADDRESS_BOOK) { inclusive = false }
-                            launchSingleTop = true
-                        }
+            composable(
+                route = Routes.CONNECT,
+                arguments = listOf(
+                    navArgument("editId") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
                     },
-                )
+                ),
+            ) { backStackEntry ->
+                val editId = backStackEntry.arguments?.getString("editId")
+                // 編集時はプロファイルを読み込んでから画面を出す（新規モードが一瞬映るのを防ぐ）。
+                var initial by remember { mutableStateOf<HostProfile?>(null) }
+                var ready by remember { mutableStateOf(editId == null) }
+                LaunchedEffect(editId) {
+                    if (editId != null) {
+                        initial = profileRepository.get(editId)
+                        ready = true
+                    }
+                }
+                if (ready) {
+                    ConnectScreen(
+                        initial = initial,
+                        onBack = { navController.popBackStack() },
+                        onConnect = { req, label, save ->
+                            if (save) scope.launch {
+                                profileRepository.save(label, req.host, req.port, req.username, req.auth)
+                            }
+                            sessionController.connect(req, label)
+                            // CONNECT を積み残さず、戻るでホスト一覧へ戻す。
+                            navController.navigate(Routes.TERMINAL) {
+                                popUpTo(Routes.ADDRESS_BOOK) { inclusive = false }
+                                launchSingleTop = true
+                            }
+                        },
+                        onSaveEdit = { label, host, port, username, auth ->
+                            val id = initial?.id
+                            if (id != null) {
+                                scope.launch {
+                                    profileRepository.update(id, label, host, port, username, auth)
+                                }
+                            }
+                            navController.popBackStack()
+                        },
+                    )
+                }
             }
             composable(Routes.SETTINGS) {
                 val biometricEnabled by settingsStore.biometricEnabled.collectAsState(initial = true)

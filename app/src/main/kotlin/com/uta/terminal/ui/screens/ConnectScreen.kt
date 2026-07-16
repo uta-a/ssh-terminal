@@ -25,6 +25,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -38,50 +39,78 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
 import com.uta.terminal.core.ssh.SshAuth
 import com.uta.terminal.core.ssh.SshConnectionRequest
+import com.uta.terminal.data.AuthKind
+import com.uta.terminal.data.HostProfile
 
 /**
- * クイック接続フォーム（MVP）。ドロワー「新規セッション」からの遷移先。
- * 入力した接続情報で即座に SSH セッションを張る。保存（アドレス帳 CRUD）は後続フェーズ。
+ * 接続フォーム。新規（[initial] == null）と編集（!= null）を兼ねる。
+ * - 新規：入力した接続情報で即座に SSH セッションを張る（保存は任意）。
+ * - 編集：非秘密情報をプリフィルし、秘密（パスワード/鍵）は「変更する」を押したときだけ再入力
+ *   （押さなければ既存の秘密を維持したまま [onSaveEdit] の auth に null を渡す）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConnectScreen(
     onBack: () -> Unit,
     onConnect: (SshConnectionRequest, String, Boolean) -> Unit,
+    initial: HostProfile? = null,
+    onSaveEdit: (label: String, host: String, port: Int, username: String, auth: SshAuth?) -> Unit =
+        { _, _, _, _, _ -> },
 ) {
+    val editing = initial != null
+    val initialTab = if (initial?.authKind == AuthKind.KEY) 1 else 0
+
     // 画面回転でフォーム入力が消えないよう rememberSaveable で保持する。
-    var label by rememberSaveable { mutableStateOf("") }
-    var host by rememberSaveable { mutableStateOf("") }
-    var port by rememberSaveable { mutableStateOf("22") }
-    var username by rememberSaveable { mutableStateOf("") }
-    var authTab by rememberSaveable { mutableStateOf(0) } // 0=パスワード, 1=秘密鍵
+    var label by rememberSaveable { mutableStateOf(initial?.label ?: "") }
+    var host by rememberSaveable { mutableStateOf(initial?.host ?: "") }
+    var port by rememberSaveable { mutableStateOf(initial?.port?.toString() ?: "22") }
+    var username by rememberSaveable { mutableStateOf(initial?.username ?: "") }
+    var authTab by rememberSaveable { mutableStateOf(initialTab) } // 0=パスワード, 1=秘密鍵
     var password by rememberSaveable { mutableStateOf("") }
     var privateKey by rememberSaveable { mutableStateOf("") }
     var passphrase by rememberSaveable { mutableStateOf("") }
     var save by rememberSaveable { mutableStateOf(true) }
+    // 編集時に「パスワード/鍵を変更する」を押したか。押すまで秘密入力欄は出さない。
+    var changeSecret by rememberSaveable { mutableStateOf(false) }
+
+    // 秘密の入力が必要か：新規は常に必要。編集は「変更する」を押したか、認証方式を変えたとき。
+    val secretRequired = !editing || changeSecret || authTab != initialTab
 
     val portNum = port.toIntOrNull()
-    val canConnect = host.isNotBlank() && username.isNotBlank() &&
+    val canSubmit = host.isNotBlank() && username.isNotBlank() &&
         portNum != null && portNum in 1..65535 &&
-        (if (authTab == 0) password.isNotEmpty() else privateKey.isNotBlank())
+        (!secretRequired || (if (authTab == 0) password.isNotEmpty() else privateKey.isNotBlank()))
+
+    fun buildAuth(): SshAuth = if (authTab == 0) {
+        SshAuth.Password(password)
+    } else {
+        SshAuth.PrivateKey(privateKey, passphrase.ifEmpty { null })
+    }
 
     fun submit() {
         val p = portNum ?: return
-        val auth = if (authTab == 0) {
-            SshAuth.Password(password)
-        } else {
-            SshAuth.PrivateKey(privateKey, passphrase.ifEmpty { null })
-        }
         val displayLabel = label.trim().ifEmpty { "${username.trim()}@${host.trim()}" }
-        // cols/rows は仮値。実サイズは端末カード計測後に resize で送る。
-        val req = SshConnectionRequest(host.trim(), p, username.trim(), auth, cols = 80, rows = 24)
-        onConnect(req, displayLabel, save)
+        if (editing) {
+            onSaveEdit(
+                displayLabel,
+                host.trim(),
+                p,
+                username.trim(),
+                if (secretRequired) buildAuth() else null,
+            )
+        } else {
+            // cols/rows は仮値。実サイズは端末カード計測後に resize で送る。
+            val req = SshConnectionRequest(
+                host.trim(), p, username.trim(), buildAuth(), cols = 80, rows = 24,
+            )
+            onConnect(req, displayLabel, save)
+        }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("新規接続") },
+                title = { Text(if (editing) "接続先を編集" else "新規接続") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る")
@@ -143,7 +172,20 @@ fun ConnectScreen(
                 ) { Text("秘密鍵") }
             }
 
-            if (authTab == 0) {
+            if (!secretRequired) {
+                // 編集中・秘密未変更：既存の秘密を維持する旨と、変更への導線だけ出す。
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Text(
+                        if (authTab == 0) "保存済みのパスワードを使用" else "保存済みの鍵を使用",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { changeSecret = true }) {
+                        Text(if (authTab == 0) "パスワードを変更" else "鍵を変更")
+                    }
+                }
+            } else if (authTab == 0) {
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
@@ -171,24 +213,34 @@ fun ConnectScreen(
                 )
             }
 
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Checkbox(checked = save, onCheckedChange = { save = it })
-                Text("この接続先を保存する（パスワード/鍵は暗号化して保存）")
+            if (!editing) {
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Checkbox(checked = save, onCheckedChange = { save = it })
+                    Text("この接続先を保存する（パスワード/鍵は暗号化して保存）")
+                }
             }
 
             Spacer(Modifier.height(4.dp))
             Button(
                 onClick = { submit() },
-                enabled = canConnect,
+                enabled = canSubmit,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(if (save) "保存して接続" else "接続")
+                Text(
+                    when {
+                        editing -> "保存"
+                        save -> "保存して接続"
+                        else -> "接続"
+                    },
+                )
             }
-            Text(
-                "ホスト鍵は初回接続時に信頼保存されます（TOFU）。現在は起動ごとにリセットされます。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (!editing) {
+                Text(
+                    "ホスト鍵は初回接続時に信頼保存されます（TOFU）。現在は起動ごとにリセットされます。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
