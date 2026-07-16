@@ -26,4 +26,9 @@ data class ProfileEntity(
     val createdAt: Long,
     /** 一覧の表示順（昇順）。小さいほど上。手動並び替えで更新する。 */
     @ColumnInfo(defaultValue = "0") val sortOrder: Int = 0,
+    /**
+     * 鍵ストア（ssh_keys）の参照。authKind="KEY" で非 null なら秘密は鍵ストア側にあり、
+     * 行内の secret 列は使わない（旧インライン鍵は起動時に鍵ストアへ昇格される）。
+     */
+    val keyId: String? = null,
 )

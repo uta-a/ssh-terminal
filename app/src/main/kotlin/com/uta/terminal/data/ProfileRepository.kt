@@ -11,7 +11,7 @@ import java.util.UUID
 /** 認証種別（UI 表示・分岐用）。 */
 enum class AuthKind { PASSWORD, KEY }
 
-/** UI が扱う保存済みプロファイル（秘密は含まない）。 */
+/** UI が扱う保存済みプロファイル（秘密は含まない）。KEY のとき [keyId] が鍵ストアを指す。 */
 data class HostProfile(
     val id: String,
     val label: String,
@@ -19,13 +19,27 @@ data class HostProfile(
     val port: Int,
     val username: String,
     val authKind: AuthKind,
+    val keyId: String? = null,
 )
 
+/** プロファイルに保存する認証情報の指定。 */
+sealed interface AuthInput {
+    /** パスワード（行内に暗号化保存）。 */
+    data class Password(val password: String) : AuthInput
+
+    /** 鍵ストアの鍵参照（秘密は ssh_keys 側にあり、行内には持たない）。 */
+    data class KeyRef(val keyId: String) : AuthInput
+}
+
 /**
- * 接続プロファイルの保存・取得。非秘密情報は Room、秘密は [SecretStore] で暗号化して同じ行に保持する。
+ * 接続プロファイルの保存・取得。非秘密情報は Room、パスワードは [SecretStore] で暗号化して
+ * 同じ行に保持する。鍵は鍵ストア（[SshKeyRepository]）への参照（keyId）で持つ。
  * 一覧には秘密を出さず、接続時に [resolveAuth] で復号して [SshAuth] を組み立てる。
  */
-class ProfileRepository(private val dao: ProfileDao) {
+class ProfileRepository(
+    private val dao: ProfileDao,
+    private val keyRepository: SshKeyRepository,
+) {
 
     val profiles: Flow<List<HostProfile>> =
         dao.observeAll().map { list -> list.map { it.toHostProfile() } }
@@ -35,7 +49,7 @@ class ProfileRepository(private val dao: ProfileDao) {
         host: String,
         port: Int,
         username: String,
-        auth: SshAuth,
+        auth: AuthInput,
     ): String = withContext(Dispatchers.IO) {
         val id = UUID.randomUUID().toString()
         val sealed = seal(auth)
@@ -51,10 +65,11 @@ class ProfileRepository(private val dao: ProfileDao) {
                 authKind = sealed.kind,
                 secretIv = sealed.secretIv,
                 secretCipher = sealed.secretCipher,
-                passIv = sealed.passIv,
-                passCipher = sealed.passCipher,
+                passIv = null,
+                passCipher = null,
                 createdAt = System.currentTimeMillis(),
                 sortOrder = sortOrder,
+                keyId = sealed.keyId,
             ),
         )
         id
@@ -66,8 +81,8 @@ class ProfileRepository(private val dao: ProfileDao) {
     }
 
     /**
-     * プロファイルを更新する。[auth] が null のときは秘密を変更せず、非秘密情報だけを更新する
-     * （編集画面で「パスワード/鍵を変更する」を押さなかった場合）。
+     * プロファイルを更新する。[auth] が null のときは認証情報を変更せず、
+     * 非秘密情報だけを更新する（編集画面で認証を触らなかった場合）。
      */
     suspend fun update(
         id: String,
@@ -75,7 +90,7 @@ class ProfileRepository(private val dao: ProfileDao) {
         host: String,
         port: Int,
         username: String,
-        auth: SshAuth?,
+        auth: AuthInput?,
     ) = withContext(Dispatchers.IO) {
         val e = dao.getById(id) ?: return@withContext
         val updated = if (auth == null) {
@@ -90,8 +105,9 @@ class ProfileRepository(private val dao: ProfileDao) {
                 authKind = sealed.kind,
                 secretIv = sealed.secretIv,
                 secretCipher = sealed.secretCipher,
-                passIv = sealed.passIv,
-                passCipher = sealed.passCipher,
+                passIv = null,
+                passCipher = null,
+                keyId = sealed.keyId,
             )
         }
         dao.upsert(updated)
@@ -120,19 +136,56 @@ class ProfileRepository(private val dao: ProfileDao) {
     /** 保存済み秘密を復号して認証情報を組み立てる。存在しなければ null。 */
     suspend fun resolveAuth(id: String): SshAuth? = withContext(Dispatchers.IO) {
         val e = dao.getById(id) ?: return@withContext null
-        val secret = String(SecretStore.decrypt(e.secretIv, e.secretCipher), Charsets.UTF_8)
         when (e.authKind) {
-            "PASSWORD" -> SshAuth.Password(secret)
+            "PASSWORD" -> {
+                val secret = String(SecretStore.decrypt(e.secretIv, e.secretCipher), Charsets.UTF_8)
+                SshAuth.Password(secret)
+            }
             "KEY" -> {
-                val pass = if (e.passIv != null && e.passCipher != null) {
-                    String(SecretStore.decrypt(e.passIv, e.passCipher), Charsets.UTF_8)
+                val keyId = e.keyId
+                if (keyId != null) {
+                    keyRepository.resolveAuth(keyId)
                 } else {
-                    null
+                    // 昇格前のインライン鍵（旧形式）フォールバック。
+                    resolveInlineKey(e)
                 }
-                SshAuth.PrivateKey(secret, pass)
             }
             else -> null
         }
+    }
+
+    /**
+     * 旧形式（行内に PEM を暗号化保存）の鍵プロファイルを鍵ストアへ昇格する。
+     * アプリ起動時に一度呼ぶ。個々の失敗はスキップし、インラインのまま動かし続ける。
+     */
+    suspend fun promoteInlineKeys() = withContext(Dispatchers.IO) {
+        for (e in dao.inlineKeyProfiles()) {
+            runCatching {
+                val auth = resolveInlineKey(e) ?: return@runCatching
+                val keyId = keyRepository.add("${e.label} の鍵", auth.pem, auth.passphrase)
+                // 参照へ切り替え、行内の秘密は空にする（以後は鍵ストア側が正）。
+                dao.upsert(
+                    e.copy(
+                        keyId = keyId,
+                        secretIv = ByteArray(0),
+                        secretCipher = ByteArray(0),
+                        passIv = null,
+                        passCipher = null,
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun resolveInlineKey(e: ProfileEntity): SshAuth.PrivateKey? {
+        if (e.secretCipher.isEmpty()) return null
+        val pem = String(SecretStore.decrypt(e.secretIv, e.secretCipher), Charsets.UTF_8)
+        val pass = if (e.passIv != null && e.passCipher != null) {
+            String(SecretStore.decrypt(e.passIv, e.passCipher), Charsets.UTF_8)
+        } else {
+            null
+        }
+        return SshAuth.PrivateKey(pem, pass)
     }
 }
 
@@ -141,29 +194,18 @@ private class SealedAuth(
     val kind: String,
     val secretIv: ByteArray,
     val secretCipher: ByteArray,
-    val passIv: ByteArray?,
-    val passCipher: ByteArray?,
+    val keyId: String?,
 )
 
-/** [SshAuth] を [SecretStore] で暗号化して行形式に変換する。 */
-private fun seal(auth: SshAuth): SealedAuth {
-    val kind: String
-    val secretPlain: String
-    val passPlain: String?
-    when (auth) {
-        is SshAuth.Password -> { kind = "PASSWORD"; secretPlain = auth.password; passPlain = null }
-        is SshAuth.PrivateKey -> { kind = "KEY"; secretPlain = auth.pem; passPlain = auth.passphrase }
+/** [AuthInput] を行形式に変換する（パスワードは [SecretStore] で暗号化、鍵は参照のみ）。 */
+private fun seal(auth: AuthInput): SealedAuth = when (auth) {
+    is AuthInput.Password -> {
+        val sealed = SecretStore.encrypt(auth.password.toByteArray(Charsets.UTF_8))
+        SealedAuth(kind = "PASSWORD", secretIv = sealed.iv, secretCipher = sealed.ciphertext, keyId = null)
     }
-    val sealedSecret = SecretStore.encrypt(secretPlain.toByteArray(Charsets.UTF_8))
-    val sealedPass = passPlain?.takeIf { it.isNotEmpty() }
-        ?.let { SecretStore.encrypt(it.toByteArray(Charsets.UTF_8)) }
-    return SealedAuth(
-        kind = kind,
-        secretIv = sealedSecret.iv,
-        secretCipher = sealedSecret.ciphertext,
-        passIv = sealedPass?.iv,
-        passCipher = sealedPass?.ciphertext,
-    )
+    is AuthInput.KeyRef -> {
+        SealedAuth(kind = "KEY", secretIv = ByteArray(0), secretCipher = ByteArray(0), keyId = auth.keyId)
+    }
 }
 
 private fun ProfileEntity.toHostProfile() = HostProfile(
@@ -173,4 +215,5 @@ private fun ProfileEntity.toHostProfile() = HostProfile(
     port = port,
     username = username,
     authKind = if (authKind == "KEY") AuthKind.KEY else AuthKind.PASSWORD,
+    keyId = keyId,
 )

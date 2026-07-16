@@ -33,4 +33,18 @@ interface ProfileDao {
 
     @Query("DELETE FROM profiles WHERE id = :id")
     suspend fun delete(id: String)
+
+    /** 鍵ストアの各鍵を使っているプロファイル数（鍵管理画面の「使用中」表示・削除ガード用）。 */
+    @Query("SELECT keyId, COUNT(*) AS count FROM profiles WHERE keyId IS NOT NULL GROUP BY keyId")
+    fun observeKeyUsage(): Flow<List<KeyUsage>>
+
+    @Query("SELECT COUNT(*) FROM profiles WHERE keyId = :keyId")
+    suspend fun keyUsageCount(keyId: String): Int
+
+    /** 鍵ストア未昇格のインライン鍵プロファイル（起動時マイグレーション対象）。 */
+    @Query("SELECT * FROM profiles WHERE authKind = 'KEY' AND keyId IS NULL")
+    suspend fun inlineKeyProfiles(): List<ProfileEntity>
 }
+
+/** [ProfileDao.observeKeyUsage] の集計行。 */
+data class KeyUsage(val keyId: String, val count: Int)

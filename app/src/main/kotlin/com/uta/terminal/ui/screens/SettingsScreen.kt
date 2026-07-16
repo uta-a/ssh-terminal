@@ -1,5 +1,6 @@
 package com.uta.terminal.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -30,6 +31,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     biometricEnabled: Boolean,
     onBiometricChange: (Boolean) -> Unit,
+    onOpenKeys: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -69,7 +71,11 @@ fun SettingsScreen(
                 },
             )
             PlaceholderItem("既知ホスト（TOFU）", "保存済みフィンガープリントの管理")
-            PlaceholderItem("鍵管理", "鍵の生成・インポート・削除")
+            ListItem(
+                headlineContent = { Text("鍵管理") },
+                supportingContent = { Text("SSH 秘密鍵の登録・公開鍵コピー・削除") },
+                modifier = Modifier.clickable(onClick = onOpenKeys),
+            )
 
             SettingsSectionTitle("情報")
             PlaceholderItem("バージョン", "0.1.0")

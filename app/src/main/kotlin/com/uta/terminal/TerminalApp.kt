@@ -8,8 +8,13 @@ import com.uta.terminal.core.ssh.HostKeyStore
 import com.uta.terminal.core.ssh.InMemoryHostKeyStore
 import com.uta.terminal.data.ProfileRepository
 import com.uta.terminal.data.SettingsStore
+import com.uta.terminal.data.SshKeyRepository
 import com.uta.terminal.data.TerminalDatabase
 import com.uta.terminal.session.SessionController
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /** 手動 DI コンテナ。依存を最小化するため Hilt は使わない（IR Tool と同じ流儀）。 */
 class AppContainer(app: Application) {
@@ -25,11 +30,12 @@ class AppContainer(app: Application) {
     // アクティブな SSH セッションのライフサイクル管理（EmulatorHost を保持）。
     val sessionController = SessionController(appContext, sessionManager, hostKeyStore)
 
-    // 接続プロファイルの永続化（Room）。秘密は Keystore で暗号化して保存する。
+    // 接続プロファイル・鍵ストアの永続化（Room）。秘密は Keystore で暗号化して保存する。
     private val database = Room.databaseBuilder(appContext, TerminalDatabase::class.java, "terminal.db")
-        .addMigrations(TerminalDatabase.MIGRATION_1_2)
+        .addMigrations(TerminalDatabase.MIGRATION_1_2, TerminalDatabase.MIGRATION_2_3)
         .build()
-    val profileRepository = ProfileRepository(database.profileDao())
+    val sshKeyRepository = SshKeyRepository(database.sshKeyDao(), database.profileDao())
+    val profileRepository = ProfileRepository(database.profileDao(), sshKeyRepository)
 
     // アプリ設定（生体認証 ON/OFF 等）。
     val settingsStore = SettingsStore(appContext)
@@ -46,5 +52,9 @@ class TerminalApp : Application() {
         // sshj が参照する "BC" プロバイダを本物の BouncyCastle へ差し替える（Android 対処）。
         com.uta.terminal.ssh.SshSecurity.ensureBouncyCastle()
         container = AppContainer(this)
+        // 旧形式（行内暗号化）の鍵プロファイルを鍵ストアへ昇格する（失敗はスキップ）。
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            runCatching { container.profileRepository.promoteInlineKeys() }
+        }
     }
 }

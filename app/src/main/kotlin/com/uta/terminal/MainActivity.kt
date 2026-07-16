@@ -64,14 +64,19 @@ import androidx.navigation.navArgument
 import com.uta.terminal.core.model.SessionState
 import com.uta.terminal.core.session.SessionInfo
 import com.uta.terminal.core.session.SessionManager
+import com.uta.terminal.core.ssh.SshAuth
 import com.uta.terminal.core.ssh.SshConnectionRequest
+import com.uta.terminal.data.AuthInput
 import com.uta.terminal.data.HostProfile
 import com.uta.terminal.data.ProfileRepository
 import com.uta.terminal.data.SettingsStore
+import com.uta.terminal.data.SshKeyRepository
 import com.uta.terminal.session.SessionController
 import com.uta.terminal.ui.BiometricGate
 import com.uta.terminal.ui.screens.AddressBookScreen
+import com.uta.terminal.ui.screens.AuthSpec
 import com.uta.terminal.ui.screens.ConnectScreen
+import com.uta.terminal.ui.screens.KeysScreen
 import com.uta.terminal.ui.screens.SettingsScreen
 import com.uta.terminal.ui.screens.TerminalScreen
 import com.uta.terminal.ui.theme.TerminalTheme
@@ -103,6 +108,7 @@ class MainActivity : FragmentActivity() {
                         container.sessionManager,
                         container.sessionController,
                         container.profileRepository,
+                        container.sshKeyRepository,
                         container.settingsStore,
                     )
                 }
@@ -116,10 +122,32 @@ private object Routes {
     const val ADDRESS_BOOK = "address_book"
     const val CONNECT = "connect?editId={editId}"
     const val SETTINGS = "settings"
+    const val KEYS = "keys"
 
     /** 接続フォームへの遷移先。[editId] を渡すと編集モードで開く。 */
     fun connect(editId: String? = null): String =
         if (editId != null) "connect?editId=$editId" else "connect"
+}
+
+/**
+ * フォームの [AuthSpec] を実際の認証情報へ解決する。
+ * 新規鍵は鍵ストアへ登録し、以後は参照（keyId）で扱う。
+ * @return 接続に使う [SshAuth] と保存に使う [AuthInput]。鍵が見つからなければ null。
+ */
+private suspend fun resolveAuthSpec(
+    spec: AuthSpec,
+    keys: SshKeyRepository,
+): Pair<SshAuth, AuthInput>? = when (spec) {
+    is AuthSpec.Password ->
+        SshAuth.Password(spec.password) to AuthInput.Password(spec.password)
+    is AuthSpec.ExistingKey -> {
+        val auth = keys.resolveAuth(spec.keyId)
+        if (auth == null) null else auth to AuthInput.KeyRef(spec.keyId)
+    }
+    is AuthSpec.NewKey -> {
+        val id = keys.add(spec.name, spec.pem, spec.passphrase)
+        SshAuth.PrivateKey(spec.pem, spec.passphrase) to AuthInput.KeyRef(id)
+    }
 }
 
 @Composable
@@ -127,6 +155,7 @@ private fun AppRoot(
     sessionManager: SessionManager,
     sessionController: SessionController,
     profileRepository: ProfileRepository,
+    sshKeyRepository: SshKeyRepository,
     settingsStore: SettingsStore,
 ) {
     val navController = rememberNavController()
@@ -230,6 +259,7 @@ private fun AppRoot(
                 ),
             ) { backStackEntry ->
                 val editId = backStackEntry.arguments?.getString("editId")
+                val keys by sshKeyRepository.keys.collectAsState(initial = emptyList())
                 // 編集時はプロファイルを読み込んでから画面を出す（新規モードが一瞬映るのを防ぐ）。
                 var initial by remember { mutableStateOf<HostProfile?>(null) }
                 var ready by remember { mutableStateOf(editId == null) }
@@ -241,30 +271,66 @@ private fun AppRoot(
                 }
                 if (ready) {
                     ConnectScreen(
+                        keys = keys,
                         initial = initial,
                         onBack = { navController.popBackStack() },
-                        onConnect = { req, label, save ->
-                            if (save) scope.launch {
-                                profileRepository.save(label, req.host, req.port, req.username, req.auth)
-                            }
-                            sessionController.connect(req, label)
-                            // CONNECT を積み残さず、戻るでホスト一覧へ戻す。
-                            navController.navigate(Routes.TERMINAL) {
-                                popUpTo(Routes.ADDRESS_BOOK) { inclusive = false }
-                                launchSingleTop = true
-                            }
-                        },
-                        onSaveEdit = { label, host, port, username, auth ->
-                            val id = initial?.id
-                            if (id != null) {
-                                scope.launch {
-                                    profileRepository.update(id, label, host, port, username, auth)
+                        onConnect = { label, host, port, username, spec, save ->
+                            scope.launch {
+                                val resolved = try {
+                                    resolveAuthSpec(spec, sshKeyRepository)
+                                } catch (e: Throwable) {
+                                    null
+                                }
+                                if (resolved == null) {
+                                    Toast.makeText(context, "認証情報の準備に失敗しました", Toast.LENGTH_SHORT).show()
+                                    return@launch
+                                }
+                                val (auth, input) = resolved
+                                if (save) profileRepository.save(label, host, port, username, input)
+                                val req = SshConnectionRequest(host, port, username, auth, cols = 80, rows = 24)
+                                sessionController.connect(req, label)
+                                // CONNECT を積み残さず、戻るでホスト一覧へ戻す。
+                                navController.navigate(Routes.TERMINAL) {
+                                    popUpTo(Routes.ADDRESS_BOOK) { inclusive = false }
+                                    launchSingleTop = true
                                 }
                             }
-                            navController.popBackStack()
+                        },
+                        onSaveEdit = { label, host, port, username, spec ->
+                            val id = initial?.id
+                            scope.launch {
+                                if (id != null) {
+                                    val input = when (spec) {
+                                        null -> null
+                                        is AuthSpec.Password -> AuthInput.Password(spec.password)
+                                        is AuthSpec.ExistingKey -> AuthInput.KeyRef(spec.keyId)
+                                        is AuthSpec.NewKey -> AuthInput.KeyRef(
+                                            sshKeyRepository.add(spec.name, spec.pem, spec.passphrase),
+                                        )
+                                    }
+                                    profileRepository.update(id, label, host, port, username, input)
+                                }
+                                navController.popBackStack()
+                            }
                         },
                     )
                 }
+            }
+            composable(Routes.KEYS) {
+                val keys by sshKeyRepository.keys.collectAsState(initial = emptyList())
+                KeysScreen(
+                    keys = keys,
+                    onBack = { navController.popBackStack() },
+                    onAdd = { name, pem, pass ->
+                        scope.launch { sshKeyRepository.add(name, pem, pass) }
+                    },
+                    onRename = { id, name ->
+                        scope.launch { sshKeyRepository.rename(id, name) }
+                    },
+                    onDelete = { id ->
+                        scope.launch { sshKeyRepository.delete(id) }
+                    },
+                )
             }
             composable(Routes.SETTINGS) {
                 val biometricEnabled by settingsStore.biometricEnabled.collectAsState(initial = true)
@@ -274,6 +340,7 @@ private fun AppRoot(
                     onBiometricChange = { enabled ->
                         scope.launch { settingsStore.setBiometricEnabled(enabled) }
                     },
+                    onOpenKeys = { navController.navigate(Routes.KEYS) },
                 )
             }
         }
