@@ -197,6 +197,7 @@ private fun AppRoot(
                         }
                     },
                     onDelete = { id -> scope.launch { profileRepository.delete(id) } },
+                    onReorder = { ids -> scope.launch { profileRepository.reorder(ids) } },
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                     // アクティブなセッションがあれば端末へ戻る導線を出す。
                     onReturnToTerminal = if (sessionController.host != null) {
