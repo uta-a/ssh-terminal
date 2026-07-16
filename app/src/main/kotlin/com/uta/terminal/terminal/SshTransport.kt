@@ -24,6 +24,9 @@ class SshTransport(
 
     private var onReceive: ((ByteArray, Int) -> Unit)? = null
 
+    /** リモート出力が届いたときの通知（実行中インジケータ用）。メインスレッドで呼ばれる。 */
+    var onActivity: (() -> Unit)? = null
+
     private val io = Executors.newSingleThreadExecutor { r ->
         Thread(r, "ssh-write").apply { isDaemon = true }
     }
@@ -34,7 +37,10 @@ class SshTransport(
 
     /** SSH 読み取りスレッドから呼ばれる。メインスレッドへ渡してエミュレータへ流す。 */
     fun deliver(data: ByteArray, length: Int) {
-        main.post { onReceive?.invoke(data, length) }
+        main.post {
+            onReceive?.invoke(data, length)
+            onActivity?.invoke()
+        }
     }
 
     override fun send(data: ByteArray, offset: Int, count: Int) {

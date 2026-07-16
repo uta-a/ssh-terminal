@@ -1,13 +1,23 @@
 package com.uta.terminal
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -29,15 +39,19 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.uta.terminal.core.model.SessionState
 import com.uta.terminal.core.session.SessionInfo
 import com.uta.terminal.core.session.SessionManager
 import com.uta.terminal.core.ssh.SshConnectionRequest
 import com.uta.terminal.data.ProfileRepository
 import com.uta.terminal.session.SessionController
+import com.uta.terminal.ui.BiometricGate
 import com.uta.terminal.ui.screens.AddressBookScreen
 import com.uta.terminal.ui.screens.ConnectScreen
 import com.uta.terminal.ui.screens.SettingsScreen
@@ -45,14 +59,28 @@ import com.uta.terminal.ui.screens.TerminalScreen
 import com.uta.terminal.ui.theme.TerminalTheme
 import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity() {
+// 生体認証（BiometricPrompt）を使うため FragmentActivity を継承する。
+class MainActivity : FragmentActivity() {
+    private val requestNotifications =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // 常駐通知（フォアグラウンドサービス）表示のため、Android 13+ では通知権限を要求する。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         val container = (application as TerminalApp).container
         setContent {
             TerminalTheme {
-                AppRoot(container.sessionManager, container.sessionController, container.profileRepository)
+                // 起動時に指紋認証でロック解除するまでアプリ本体を出さない。
+                BiometricGate {
+                    AppRoot(container.sessionManager, container.sessionController, container.profileRepository)
+                }
             }
         }
     }
@@ -74,6 +102,7 @@ private fun AppRoot(
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val sessions by sessionManager.sessions.collectAsState()
 
     ModalNavigationDrawer(
@@ -84,6 +113,8 @@ private fun AppRoot(
                 onSelectSession = { id ->
                     sessionManager.setActive(id)
                     scope.launch { drawerState.close() }
+                    // セッションを選んだら端末画面へ戻す（選択が無反応にならないように）。
+                    navController.navigate(Routes.TERMINAL) { launchSingleTop = true }
                 },
                 onNewSession = {
                     scope.launch { drawerState.close() }
@@ -105,8 +136,12 @@ private fun AppRoot(
                     host = sessionController.host,
                     currentSessionLabel = sessionController.label,
                     state = sessionController.state,
+                    busy = sessionController.busy,
                     onOpenDrawer = { scope.launch { drawerState.open() } },
                     onDisconnect = { sessionController.disconnect() },
+                    onRename = { name -> sessionController.rename(name) },
+                    // セッションが無くなったら（切断直後など）起動ページ（ホスト一覧）へ戻す。
+                    onExit = { navController.popBackStack(Routes.ADDRESS_BOOK, inclusive = false) },
                 )
             }
             composable(Routes.ADDRESS_BOOK) {
@@ -116,7 +151,19 @@ private fun AppRoot(
                     onAddNew = { navController.navigate(Routes.CONNECT) },
                     onConnect = { profile ->
                         scope.launch {
-                            val auth = profileRepository.resolveAuth(profile.id) ?: return@launch
+                            val auth = try {
+                                profileRepository.resolveAuth(profile.id)
+                            } catch (e: Throwable) {
+                                null
+                            }
+                            if (auth == null) {
+                                Toast.makeText(
+                                    context,
+                                    "接続情報の復号に失敗しました",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                return@launch
+                            }
                             val req = SshConnectionRequest(
                                 profile.host, profile.port, profile.username, auth, cols = 80, rows = 24,
                             )
@@ -126,6 +173,12 @@ private fun AppRoot(
                     },
                     onDelete = { id -> scope.launch { profileRepository.delete(id) } },
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                    // アクティブなセッションがあれば端末へ戻る導線を出す。
+                    onReturnToTerminal = if (sessionController.host != null) {
+                        { navController.navigate(Routes.TERMINAL) { launchSingleTop = true } }
+                    } else {
+                        null
+                    },
                 )
             }
             composable(Routes.CONNECT) {
@@ -170,6 +223,14 @@ private fun SessionDrawer(
             LazyColumn(modifier = Modifier.weight(1f)) {
                 items(sessions, key = { it.id.value }) { s ->
                     NavigationDrawerItem(
+                        // 生存インジケータ：接続中は緑、確立中は tertiary、失敗は error、切断は灰。
+                        icon = {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .background(sessionDotColor(s.state), CircleShape),
+                            )
+                        },
                         label = { Text(s.label) },
                         selected = false,
                         onClick = { onSelectSession(s.id) },
@@ -203,4 +264,13 @@ private fun SessionDrawer(
             )
         }
     }
+}
+
+/** ドロワーのセッション生存インジケータの色。 */
+@Composable
+private fun sessionDotColor(state: SessionState): Color = when (state) {
+    is SessionState.Connected -> Color(0xFF4CAF50)
+    is SessionState.Connecting, is SessionState.Reconnecting -> MaterialTheme.colorScheme.tertiary
+    is SessionState.Failed -> MaterialTheme.colorScheme.error
+    is SessionState.Disconnected -> MaterialTheme.colorScheme.onSurfaceVariant
 }

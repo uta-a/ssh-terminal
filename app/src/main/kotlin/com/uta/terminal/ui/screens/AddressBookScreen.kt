@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
@@ -48,11 +49,23 @@ fun AddressBookScreen(
     onConnect: (HostProfile) -> Unit,
     onDelete: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    onReturnToTerminal: (() -> Unit)? = null,
 ) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("ホスト一覧") },
+                // アクティブなセッションがあるときだけ、端末画面へ戻る矢印を出す。
+                navigationIcon = {
+                    if (onReturnToTerminal != null) {
+                        IconButton(onClick = onReturnToTerminal) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "端末に戻る",
+                            )
+                        }
+                    }
+                },
                 actions = {
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "設定")
@@ -77,10 +90,10 @@ fun AddressBookScreen(
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    horizontal = 12.dp,
-                    vertical = 12.dp,
+                    horizontal = 16.dp,
+                    vertical = 16.dp,
                 ),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(profiles, key = { it.id }) { p ->
                     HostCard(
@@ -110,26 +123,27 @@ private fun HostCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+                .padding(start = 20.dp, end = 10.dp, top = 20.dp, bottom = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
                 Icons.Filled.Dns,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(28.dp),
+                modifier = Modifier.size(36.dp),
             )
-            Spacer(Modifier.size(14.dp))
+            Spacer(Modifier.size(18.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     profile.label,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleLarge,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                Spacer(Modifier.size(4.dp))
                 Text(
                     "${profile.username}@${profile.host}:${profile.port}  ·  $authText",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

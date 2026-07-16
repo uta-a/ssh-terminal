@@ -32,12 +32,10 @@
             </intent-filter>
         </activity>
 
-        <!-- SSH セッションを常駐生存させるフォアグラウンドサービス。実装はセッション実装フェーズで追加。 -->
-        <!--
+        <!-- SSH セッション生存中に常駐通知を出すフォアグラウンドサービス。 -->
         <service
             android:name=".service.SshForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
-        -->
     </application>
 </manifest>

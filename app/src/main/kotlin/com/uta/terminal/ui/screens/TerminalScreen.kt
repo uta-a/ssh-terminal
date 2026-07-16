@@ -1,6 +1,7 @@
 package com.uta.terminal.ui.screens
 
 import android.view.KeyEvent as AndroidKeyEvent
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -31,6 +33,7 @@ import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,14 +43,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -84,12 +90,26 @@ fun TerminalScreen(
     host: EmulatorHost?,
     currentSessionLabel: String?,
     state: SessionState,
+    busy: Boolean,
     onOpenDrawer: () -> Unit,
     onDisconnect: () -> Unit,
+    onRename: (String) -> Unit,
+    onExit: () -> Unit,
 ) {
+    // アクティブセッションが無いのに端末画面にいる場合（切断直後など）は起動ページへ戻す。
+    // 「接続がありません」画面は出さない。
+    if (host == null) {
+        LaunchedEffect(Unit) { onExit() }
+        return
+    }
+
     var stickyCtrl by remember { mutableStateOf(false) }
     var stickyAlt by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+    // フルスクリーン（上部タイトルバー非表示）。戻るキーで解除。
+    var fullscreen by remember { mutableStateOf(false) }
+    // セッション名変更ダイアログ。
+    var renameOpen by remember { mutableStateOf(false) }
     // 入力中の 1 行（IME 変換中テキストを含む）。Enter で送信し空に戻す。
     var inputTfv by remember { mutableStateOf(TextFieldValue("")) }
     // 端末フォントの表示倍率（ピンチで拡縮、⋮ メニューでリセット）。
@@ -105,8 +125,10 @@ fun TerminalScreen(
     // ソフトキーボードが出ているか。アニメの途中値でなく最終目標値で判定し、即スナップさせる。
     val imeVisible = WindowInsets.imeAnimationTarget.getBottom(density) > 0
 
-    // 上部アクセントラインのローディング：接続確立中（Connecting/Reconnecting）に光らせる。
+    // 接続状態インジケータ用。
     val connecting = state is SessionState.Connecting || state is SessionState.Reconnecting
+    // 上部ローディング：接続確立中、またはリモートが出力中（コマンド実行中）に走らせる。
+    val running = connecting || busy
 
     // 出力で履歴が伸びたとき、スクロール位置（表示中の行）を保持する。最新表示中(0)は追従して最新のまま。
     DisposableEffect(host) {
@@ -123,11 +145,14 @@ fun TerminalScreen(
         onDispose { h.onContentChanged = null }
     }
 
+    // フルスクリーン中は戻るキーで解除する。
+    BackHandler(enabled = fullscreen) { fullscreen = false }
+
     Scaffold(
         // インセットは content 側で扱う（補助キー行をキーボード上端へアンカーするため）。
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            TopAppBar(
+            if (!fullscreen) TopAppBar(
                 title = {
                     androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
                         // 接続状態インジケータ。状態に応じて色を変える。
@@ -150,6 +175,15 @@ fun TerminalScreen(
                         Icon(Icons.Filled.MoreVert, contentDescription = "その他")
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("セッション名を変更") },
+                            onClick = { menuOpen = false; renameOpen = true },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("フルスクリーン") },
+                            onClick = { menuOpen = false; fullscreen = true },
+                        )
+                        HorizontalDivider()
                         // 現在の表示サイズ（100% = 基準）。行自体は情報表示なので無効化。
                         DropdownMenuItem(
                             text = { Text("表示サイズ ${(fontScale * 100).roundToInt()}%") },
@@ -163,7 +197,6 @@ fun TerminalScreen(
                         HorizontalDivider()
                         DropdownMenuItem(
                             text = { Text("セッションを切断") },
-                            enabled = host != null,
                             onClick = { menuOpen = false; onDisconnect() },
                         )
                     }
@@ -180,10 +213,12 @@ fun TerminalScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = padding.calculateTopPadding())
+                // フルスクリーン中はタイトルバーが無いのでステータスバー分を content 側で確保する。
+                .then(if (fullscreen) Modifier.windowInsetsPadding(WindowInsets.statusBars) else Modifier)
                 .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.imeAnimationTarget)),
         ) {
-            // 上部アクセントライン：接続確立中はローディングアニメ、それ以外は静的な細線。
-            if (connecting) {
+            // 上部アクセントライン：実行中（接続確立中・リモート出力中）はローディングアニメ、待機中は細線。
+            if (running) {
                 LinearProgressIndicator(
                     modifier = Modifier.fillMaxWidth().height(3.dp),
                 )
@@ -196,9 +231,7 @@ fun TerminalScreen(
                 )
             }
 
-            if (host == null) {
-                EmptyState(modifier = Modifier.weight(1f).fillMaxWidth())
-            } else {
+            run {
                 Surface(
                     modifier = Modifier
                         .weight(1f)
@@ -320,6 +353,29 @@ fun TerminalScreen(
             }
         }
     }
+
+    // セッション名変更ダイアログ。
+    if (renameOpen) {
+        var newName by remember { mutableStateOf(currentSessionLabel ?: "") }
+        AlertDialog(
+            onDismissRequest = { renameOpen = false },
+            title = { Text("セッション名を変更") },
+            text = {
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    singleLine = true,
+                    label = { Text("名前") },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { onRename(newName); renameOpen = false }) { Text("変更") }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameOpen = false }) { Text("キャンセル") }
+            },
+        )
+    }
 }
 
 /** 接続状態を表すドット色。 */
@@ -329,26 +385,6 @@ private fun statusColor(state: SessionState): Color = when (state) {
     is SessionState.Connecting, is SessionState.Reconnecting -> MaterialTheme.colorScheme.tertiary
     is SessionState.Failed -> MaterialTheme.colorScheme.error
     is SessionState.Disconnected -> MaterialTheme.colorScheme.onSurfaceVariant
-}
-
-/** 未接続時の空状態。 */
-@Composable
-private fun EmptyState(modifier: Modifier = Modifier) {
-    Box(modifier = modifier.padding(24.dp), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                "接続がありません",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "左上のメニュー →「新規セッション」から接続してください",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
 }
 
 /** キーボード上端相当に置く補助キー行（Ctrl/Alt は sticky トグル）。 */

@@ -22,7 +22,7 @@ class AppContainer(app: Application) {
     val hostKeyStore: HostKeyStore = InMemoryHostKeyStore()
 
     // アクティブな SSH セッションのライフサイクル管理（EmulatorHost を保持）。
-    val sessionController = SessionController(sessionManager, hostKeyStore)
+    val sessionController = SessionController(appContext, sessionManager, hostKeyStore)
 
     // 接続プロファイルの永続化（Room）。秘密は Keystore で暗号化して保存する。
     private val database = Room.databaseBuilder(appContext, TerminalDatabase::class.java, "terminal.db").build()

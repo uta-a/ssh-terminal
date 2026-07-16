@@ -87,6 +87,8 @@ dependencies {
 
     // 秘密（鍵・パスワード）の生体認証ゲート。
     implementation(libs.androidx.biometric)
+    // biometric 経由の古い fragment(1.2.x) を新しめに引き上げ、ActivityResult との衝突を回避。
+    implementation(libs.androidx.fragment)
 
     // Termux 端末エミュレータ（解析のみ利用。描画は自作）。
     implementation(libs.termux.terminal.emulator)
