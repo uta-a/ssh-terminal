@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,6 +63,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.uta.terminal.data.AuthKind
 import com.uta.terminal.data.HostProfile
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -88,6 +91,9 @@ fun AddressBookScreen(
     // 初期 emptyList の State を掴んだままにならないようにする＝クラッシュ/未反映の防止）。
     val itemsState = remember { mutableStateOf(profiles) }
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    // 端の自動スクロール用ジョブ（ドラッグ終了/端から離れたら止める）。
+    var autoScrollJob by remember { mutableStateOf<Job?>(null) }
     val dragState = remember(listState) {
         DragDropState(listState) { from, to ->
             val current = itemsState.value
@@ -151,12 +157,28 @@ fun AddressBookScreen(
                             onDrag = { change, dragAmount ->
                                 change.consume()
                                 dragState.onDrag(dragAmount.y)
+                                // 指が端に近ければ自動スクロールを回す（1本のジョブで継続）。
+                                if (autoScrollJob?.isActive != true && dragState.autoScrollDelta() != 0f) {
+                                    autoScrollJob = scope.launch {
+                                        while (true) {
+                                            val d = dragState.autoScrollDelta()
+                                            if (d == 0f) break
+                                            listState.scrollBy(d * 0.5f)
+                                            dragState.onDrag(0f) // スクロール後に入れ替え判定を更新
+                                            delay(16)
+                                        }
+                                    }
+                                }
                             },
                             onDragEnd = {
+                                autoScrollJob?.cancel()
                                 dragState.onDragEnd()
                                 onReorder(itemsState.value.map { it.id })
                             },
-                            onDragCancel = { dragState.onDragEnd() },
+                            onDragCancel = {
+                                autoScrollJob?.cancel()
+                                dragState.onDragEnd()
+                            },
                         )
                     },
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
@@ -290,7 +312,7 @@ private fun HostRow(
  * ドラッグ中アイテムの視覚オフセットを算出し、指の位置に追従させる。
  */
 private class DragDropState(
-    private val listState: LazyListState,
+    val listState: LazyListState,
     private val onMove: (Int, Int) -> Unit,
 ) {
     var draggingItemIndex by mutableStateOf<Int?>(null)
@@ -298,6 +320,8 @@ private class DragDropState(
 
     private val delta = mutableFloatStateOf(0f)
     private val initialOffset = mutableIntStateOf(0)
+    // 指のビューポート座標（px）。入れ替え判定と端の自動スクロールに使う。
+    private var pointerY = 0f
 
     private val draggingLayoutInfo: LazyListItemInfo?
         get() = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == draggingItemIndex }
@@ -315,16 +339,18 @@ private class DragDropState(
                 draggingItemIndex = it.index
                 initialOffset.intValue = it.offset
                 delta.floatValue = 0f
+                pointerY = offsetY
             }
     }
 
     fun onDrag(deltaY: Float) {
         delta.floatValue += deltaY
+        pointerY += deltaY
         val dragging = draggingLayoutInfo ?: return
-        // ドラッグ中アイテムの中心が重なった別アイテムと入れ替える。
-        val middle = dragging.offset + draggingItemOffset + dragging.size / 2f
+        // 指の位置（ビューポート座標）に重なる別アイテムと入れ替える。自動スクロール中に
+        // リストが動いても、指位置基準なら新しく指の下に来たアイテムを正しく捉えられる。
         val target = listState.layoutInfo.visibleItemsInfo.firstOrNull {
-            it.index != dragging.index && middle.toInt() in it.offset..(it.offset + it.size)
+            it.index != dragging.index && pointerY.toInt() in it.offset..(it.offset + it.size)
         }
         if (target != null) {
             val from = draggingItemIndex ?: return
@@ -333,10 +359,27 @@ private class DragDropState(
         }
     }
 
+    /**
+     * 指がリスト端に近いときの 1 フレームあたりのスクロール量（px）。0 なら不要。
+     * ドラッグ対象が可視範囲外にあるときも、端へ持っていけばリストが送られ並び替えできる。
+     */
+    fun autoScrollDelta(): Float {
+        if (draggingItemIndex == null) return 0f
+        val vpStart = listState.layoutInfo.viewportStartOffset.toFloat()
+        val vpEnd = listState.layoutInfo.viewportEndOffset.toFloat()
+        val edge = 120f
+        return when {
+            pointerY > vpEnd - edge -> (pointerY - (vpEnd - edge)).coerceIn(0f, edge)
+            pointerY < vpStart + edge -> (pointerY - (vpStart + edge)).coerceIn(-edge, 0f)
+            else -> 0f
+        }
+    }
+
     fun onDragEnd() {
         draggingItemIndex = null
         delta.floatValue = 0f
         initialOffset.intValue = 0
+        pointerY = 0f
     }
 }
 
