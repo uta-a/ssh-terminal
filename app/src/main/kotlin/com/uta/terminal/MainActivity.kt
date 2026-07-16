@@ -39,6 +39,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.uta.terminal.core.model.SessionState
 import com.uta.terminal.core.session.SessionManager
 import com.uta.terminal.core.ssh.SshAuth
 import com.uta.terminal.core.ssh.SshConnectionRequest
@@ -129,6 +130,14 @@ private suspend fun resolveAuthSpec(
         val id = keys.add(spec.name, spec.pem, spec.passphrase)
         SshAuth.PrivateKey(spec.pem, spec.passphrase) to AuthInput.KeyRef(id)
     }
+}
+
+/** 代表セッション状態を選ぶ優先度（生存を優先）。 */
+private fun rank(state: SessionState): Int = when (state) {
+    is SessionState.Connected -> 4
+    is SessionState.Connecting, is SessionState.Reconnecting -> 3
+    is SessionState.Failed -> 1
+    is SessionState.Disconnected -> 0
 }
 
 @Composable
@@ -256,9 +265,20 @@ private fun AppRoot(
             composable(Routes.ADDRESS_BOOK) {
                 val profiles by profileRepository.profiles.collectAsState(initial = emptyList())
                 val tags by profileRepository.tags.collectAsState(initial = emptyList())
+                // プロファイルごとの「代表セッション状態」。生存（接続中/確立中）を優先して選ぶ。
+                val sessionStateByProfile = remember(sessions) {
+                    val map = HashMap<String, SessionState>()
+                    for (s in sessions) {
+                        val pid = s.profileId ?: continue
+                        val cur = map[pid]
+                        if (cur == null || rank(s.state) > rank(cur)) map[pid] = s.state
+                    }
+                    map
+                }
                 AddressBookScreen(
                     profiles = profiles,
                     allTags = tags,
+                    sessionStateByProfile = sessionStateByProfile,
                     onAddNew = { navController.navigate(Routes.connect()) },
                     onEdit = { profile -> navController.navigate(Routes.connect(profile.id)) },
                     onDuplicate = { profile ->

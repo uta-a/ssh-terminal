@@ -81,7 +81,7 @@ class SessionController(
 
         sessions[id] = session
         activeId = id
-        sessionManager.upsert(SessionInfo(id, displayLabel, SessionState.Connecting))
+        sessionManager.upsert(SessionInfo(id, displayLabel, SessionState.Connecting, profileId))
         // アクティブの真実の源を一本化：SessionManager にも新規セッションをアクティブとして伝える。
         sessionManager.setActive(id)
         // 常駐通知の開始はフォアグラウンド（ユーザー操作）である connect() でのみ行う。
@@ -93,7 +93,7 @@ class SessionController(
                 main.post {
                     val s = sessions[id] ?: return@post
                     s.state = SessionState.Connected
-                    sessionManager.upsert(SessionInfo(id, s.label, SessionState.Connected))
+                    sessionManager.upsert(SessionInfo(id, s.label, SessionState.Connected, s.profileId))
                     // 接続前に canvas が計測した実サイズを PTY へ再同期。
                     transport.resize(emu.cols, emu.rows)
                     refreshNotification()
@@ -164,7 +164,7 @@ class SessionController(
         if (name.isEmpty()) return
         val s = sessions[id] ?: return
         s.label = name
-        sessionManager.upsert(SessionInfo(s.id, name, s.state))
+        sessionManager.upsert(SessionInfo(s.id, name, s.state, s.profileId))
         refreshNotification()
     }
 
@@ -186,7 +186,7 @@ class SessionController(
         s.busy = false
         feedNotice(s, if (err?.message != null) "切断されました: ${err.message}" else "接続が閉じられました")
         s.state = SessionState.Disconnected
-        sessionManager.upsert(SessionInfo(id, s.label, SessionState.Disconnected))
+        sessionManager.upsert(SessionInfo(id, s.label, SessionState.Disconnected, s.profileId))
         refreshNotification()
     }
 
@@ -195,7 +195,7 @@ class SessionController(
         Log.w(TAG, "connect failed", e)
         feedNotice(s, "接続に失敗しました: ${e.message ?: e.javaClass.simpleName}")
         s.state = SessionState.Failed(e.message ?: "接続失敗")
-        sessionManager.upsert(SessionInfo(id, s.label, s.state))
+        sessionManager.upsert(SessionInfo(id, s.label, s.state, s.profileId))
         refreshNotification()
     }
 

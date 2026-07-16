@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -71,6 +72,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -78,6 +80,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import com.uta.terminal.core.model.SessionState
 import com.uta.terminal.data.AuthKind
 import com.uta.terminal.data.HostProfile
 import kotlinx.coroutines.Job
@@ -100,6 +103,7 @@ import kotlin.math.roundToInt
 fun AddressBookScreen(
     profiles: List<HostProfile>,
     allTags: List<com.uta.terminal.data.TagWithCount>,
+    sessionStateByProfile: Map<String, SessionState>,
     onAddNew: () -> Unit,
     onConnect: (HostProfile) -> Unit,
     onNewSession: (HostProfile) -> Unit,
@@ -212,7 +216,12 @@ fun AddressBookScreen(
                                 HostRow(
                                     profile = p,
                                     dragging = false,
-                                    onConnect = { confirmConnect = p },
+                                    sessionState = sessionStateByProfile[p.id],
+                                    // セッションがあれば確認なしで開く（切替）。無ければ接続確認。
+                                    onConnect = {
+                                        if (sessionStateByProfile[p.id] != null) onConnect(p)
+                                        else confirmConnect = p
+                                    },
                                     onNewSession = { onNewSession(p) },
                                     onEdit = { onEdit(p) },
                                     onDuplicate = { onDuplicate(p) },
@@ -271,7 +280,12 @@ fun AddressBookScreen(
                                     .graphicsLayer {
                                         translationY = if (isDragging) dragState.draggingItemOffset else 0f
                                     },
-                                onConnect = { confirmConnect = p },
+                                sessionState = sessionStateByProfile[p.id],
+                                // セッションがあれば確認なしで開く（切替）。無ければ接続確認。
+                                onConnect = {
+                                    if (sessionStateByProfile[p.id] != null) onConnect(p)
+                                    else confirmConnect = p
+                                },
                                 onNewSession = { onNewSession(p) },
                                 onEdit = { onEdit(p) },
                                 onDuplicate = { onDuplicate(p) },
@@ -330,6 +344,7 @@ private fun HostRow(
     profile: HostProfile,
     dragging: Boolean,
     modifier: Modifier = Modifier,
+    sessionState: SessionState? = null,
     onConnect: () -> Unit,
     onNewSession: () -> Unit,
     onEdit: () -> Unit,
@@ -414,6 +429,15 @@ private fun HostRow(
                 Spacer(Modifier.size(18.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        // セッションがあれば状態ドット（接続中は緑）。1タップで既存シェルへ切替。
+                        if (sessionState != null) {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .background(sessionDotColor(sessionState), CircleShape),
+                            )
+                            Spacer(Modifier.size(8.dp))
+                        }
                         if (profile.pinned) {
                             Icon(
                                 Icons.Filled.PushPin,
@@ -660,6 +684,15 @@ private val stringListSaver: androidx.compose.runtime.saveable.Saver<androidx.co
             )
         },
     )
+
+/** ホストカードのセッション状態ドット色（接続中は緑）。 */
+@Composable
+private fun sessionDotColor(state: SessionState): Color = when (state) {
+    is SessionState.Connected -> Color(0xFF4CAF50)
+    is SessionState.Connecting, is SessionState.Reconnecting -> MaterialTheme.colorScheme.tertiary
+    is SessionState.Failed -> MaterialTheme.colorScheme.error
+    is SessionState.Disconnected -> MaterialTheme.colorScheme.onSurfaceVariant
+}
 
 /** 保存が 0 件のときの中央導線。 */
 @Composable

@@ -7,11 +7,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
-/** ドロワーのセッション一覧が表示する 1 行分の要約。 */
+/** セッション一覧が表示する 1 行分の要約。[profileId] は由来した保存ホスト（無ければ null）。 */
 data class SessionInfo(
     val id: SessionId,
     val label: String,
     val state: SessionState,
+    val profileId: String? = null,
 )
 
 /**
