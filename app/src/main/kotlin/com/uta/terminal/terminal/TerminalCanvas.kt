@@ -170,6 +170,7 @@ private fun renderScreen(
     }
 
     // 入力中テキスト（未送信）をカーソル位置からインライン表示し、キャレットをその末尾に置く。
+    // 全角（ワイド）文字は 2 セル幅で進める（1 セルだと次の文字が重なる）。
     var caretCol = emu.cursorCol
     var caretRow = emu.cursorRow
     if (pendingInput.isNotEmpty()) {
@@ -183,11 +184,12 @@ private fun renderScreen(
                 caretCol = 0; caretRow += 1
                 continue
             }
-            if (caretCol >= cols) { caretCol = 0; caretRow += 1 }
+            val w = if (isWideCodePoint(cp)) 2 else 1
+            if (caretCol + w > cols) { caretCol = 0; caretRow += 1 }
             if (caretRow in 0 until rows) {
                 canvas.drawText(String(Character.toChars(cp)), caretCol * cellW, caretRow * cellH + baseline, paint)
             }
-            caretCol += 1
+            caretCol += w
         }
         if (caretCol >= cols) { caretCol = 0; caretRow += 1 }
     }
@@ -211,6 +213,28 @@ private fun renderScreen(
         }
         paint.alpha = 0xff
     }
+}
+
+/**
+ * 全角（2 セル幅）文字かの近似判定（East Asian Width 相当）。
+ * Termux の WcWidth は package-private で使えないため、主要な CJK/かな/全角/絵文字の範囲で判定する。
+ */
+private fun isWideCodePoint(cp: Int): Boolean = when {
+    cp < 0x1100 -> false
+    cp in 0x1100..0x115F -> true // Hangul Jamo
+    cp in 0x2E80..0x303E -> true // CJK 部首・康熙・CJK 記号
+    cp in 0x3041..0x33FF -> true // ひらがな・カタカナ・CJK 記号等
+    cp in 0x3400..0x4DBF -> true // CJK 拡張 A
+    cp in 0x4E00..0x9FFF -> true // CJK 統合漢字
+    cp in 0xA000..0xA4CF -> true // 彝(Yi)
+    cp in 0xAC00..0xD7A3 -> true // ハングル音節
+    cp in 0xF900..0xFAFF -> true // CJK 互換漢字
+    cp in 0xFE30..0xFE4F -> true // CJK 互換形
+    cp in 0xFF00..0xFF60 -> true // 全角形
+    cp in 0xFFE0..0xFFE6 -> true // 全角記号
+    cp in 0x1F300..0x1FAFF -> true // 絵文字（概ね全角）
+    cp in 0x20000..0x3FFFD -> true // CJK 拡張 B 以降
+    else -> false
 }
 
 private fun resolveFg(color: Int, palette: IntArray, defaultFgArgb: Int, bold: Boolean): Int = when {
