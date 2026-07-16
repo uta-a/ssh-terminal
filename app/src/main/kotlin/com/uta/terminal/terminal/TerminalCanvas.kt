@@ -4,15 +4,21 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import com.termux.terminal.TerminalEmulator
 import com.termux.terminal.TextStyle
+import kotlinx.coroutines.delay
 import kotlin.math.ceil
 
 /**
@@ -45,13 +51,20 @@ fun TerminalCanvas(
     val surfaceArgb = TerminalPalette.BACKGROUND
     val cursorArgb = TerminalPalette.CURSOR
 
+    // キーボード開閉アニメ中はサイズが毎フレーム変わる。リサイズ（＝エミュレータのリフロー）は
+    // 高コストなので、収束するまでデバウンスして 1 回だけ適用する。
+    var pendingSize by remember { mutableStateOf(IntSize.Zero) }
+    LaunchedEffect(pendingSize) {
+        val s = pendingSize
+        if (s.width <= 0 || s.height <= 0) return@LaunchedEffect
+        delay(90)
+        val cols = (s.width / cellW).toInt().coerceAtLeast(2)
+        val rows = (s.height / cellH).toInt().coerceAtLeast(2)
+        host.resize(cols, rows)
+    }
+
     Canvas(
-        modifier = modifier.onSizeChanged { size ->
-            if (size.width <= 0 || size.height <= 0) return@onSizeChanged
-            val cols = (size.width / cellW).toInt().coerceAtLeast(2)
-            val rows = (size.height / cellH).toInt().coerceAtLeast(2)
-            host.resize(cols, rows)
-        },
+        modifier = modifier.onSizeChanged { size -> pendingSize = size },
     ) {
         // 再描画トリガの購読（値の変化で DrawScope が再実行される）。
         @Suppress("UNUSED_EXPRESSION")
@@ -117,11 +130,14 @@ private fun renderScreen(
             }
 
             val left = col * cellW
-            // 背景（既定背景はカード色と一致するので実質透過に見える）。
-            paint.style = Paint.Style.FILL
-            paint.color = bgArgb
-            paint.alpha = (bgArgb ushr 24)
-            canvas.drawRect(left, topY, left + cellW, topY + cellH, paint)
+            // 背景：既定背景（カード地色と一致）は塗らずにカードを透けさせる。
+            // 大半のセルはこれに該当するため、毎フレームの drawRect を大幅に削減できる。
+            if (bgArgb != surfaceArgb) {
+                paint.style = Paint.Style.FILL
+                paint.color = bgArgb
+                paint.alpha = (bgArgb ushr 24)
+                canvas.drawRect(left, topY, left + cellW, topY + cellH, paint)
+            }
 
             // 文字
             if (!invisible && idx < text.size) {

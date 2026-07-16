@@ -1,23 +1,27 @@
 package com.uta.terminal.ui.screens
 
 import android.view.KeyEvent as AndroidKeyEvent
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.ButtonDefaults
@@ -41,9 +45,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
 import com.uta.terminal.terminal.EmulatorHost
 import com.uta.terminal.terminal.LocalEchoTransport
@@ -66,11 +75,15 @@ fun TerminalScreen(
     var stickyCtrl by remember { mutableStateOf(false) }
     var stickyAlt by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
+    val density = LocalDensity.current
+    // ソフトキーボードが出ているか（補助キー行の表示可否に使う）。
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
 
     fun clearSticky() { stickyCtrl = false; stickyAlt = false }
 
     Scaffold(
+        // インセットは content 側で扱う（補助キー行をキーボード上端へアンカーするため）。
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = {
@@ -101,7 +114,10 @@ fun TerminalScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(top = padding.calculateTopPadding())
+                // 下端はナビゲーションバーと IME の大きい方に合わせる。
+                // キーボード表示時はこの padding が持ち上がり、補助キー行がキーボード上端に載る。
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime)),
         ) {
             Surface(
                 modifier = Modifier
@@ -112,62 +128,58 @@ fun TerminalScreen(
                 // 端末カードは参照デザインの calm な地色。周囲クロムの Dynamic Color とは分離する。
                 color = androidx.compose.ui.graphics.Color(TerminalPalette.BACKGROUND),
                 shadowElevation = 2.dp,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)),
             ) {
-                TerminalCanvas(
-                    host = host,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(12.dp)
-                        .focusRequester(focusRequester)
-                        .focusable()
-                        .pointerInput(Unit) {
-                            detectTapGestures {
-                                focusRequester.requestFocus()
-                                keyboard?.show()
+                Box(modifier = Modifier.fillMaxSize()) {
+                    TerminalCanvas(
+                        host = host,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(12.dp),
+                    )
+                    // 透明な入力フィールド：タップでキーボード表示、テキスト/Enter/Backspace を捕捉する。
+                    // Canvas は編集器ではないため IME を開けない。差分検出用に anchor 文字を常に保持する。
+                    var tfv by remember {
+                        mutableStateOf(TextFieldValue(INPUT_ANCHOR, TextRange(INPUT_ANCHOR.length)))
+                    }
+                    BasicTextField(
+                        value = tfv,
+                        onValueChange = { nv ->
+                            diffAndSend(tfv.text, nv.text, host, stickyCtrl, stickyAlt)
+                            clearSticky()
+                            // 通常は IME と同期を保つため値を維持（リセットしない）。
+                            // anchor を失った（先頭まで消した）か肥大化したときだけ anchor へ正規化。
+                            tfv = if (nv.text.startsWith(INPUT_ANCHOR) && nv.text.length <= 512) {
+                                nv
+                            } else {
+                                TextFieldValue(INPUT_ANCHOR, TextRange(INPUT_ANCHOR.length))
                             }
-                        }
-                        .onKeyEvent { ke ->
-                            val ev = ke.nativeKeyEvent
-                            if (ev.action != AndroidKeyEvent.ACTION_DOWN) return@onKeyEvent false
-                            val h = host
-                            val ctrl = ev.isCtrlPressed || stickyCtrl
-                            val alt = ev.isAltPressed || stickyAlt
-                            val shift = ev.isShiftPressed
-                            when (ev.keyCode) {
-                                AndroidKeyEvent.KEYCODE_ENTER -> {
-                                    h.sendBytes(byteArrayOf(0x0d)); clearSticky(); return@onKeyEvent true
-                                }
-                                AndroidKeyEvent.KEYCODE_DEL -> {
-                                    h.sendBytes(byteArrayOf(0x7f)); clearSticky(); return@onKeyEvent true
-                                }
-                                AndroidKeyEvent.KEYCODE_ESCAPE -> {
-                                    h.sendBytes(byteArrayOf(0x1b)); clearSticky(); return@onKeyEvent true
-                                }
-                                AndroidKeyEvent.KEYCODE_TAB -> {
-                                    h.sendBytes(byteArrayOf(0x09)); clearSticky(); return@onKeyEvent true
-                                }
-                            }
-                            if (h.sendKeyCode(ev.keyCode, ctrl, alt, shift)) {
-                                clearSticky(); return@onKeyEvent true
-                            }
-                            var cp = ev.unicodeChar
-                            if (cp == 0) cp = ev.getUnicodeChar(if (shift) AndroidKeyEvent.META_SHIFT_ON else 0)
-                            if (cp != 0) {
-                                h.sendCodePoint(cp, ctrl, alt); clearSticky(); return@onKeyEvent true
-                            }
-                            false
                         },
-                )
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .focusRequester(focusRequester),
+                        textStyle = TextStyle(color = Color.Transparent),
+                        cursorBrush = SolidColor(Color.Transparent),
+                        // パスワード型にすると IME の変換・サジェストが無効になり、
+                        // ローマ字変換されず生の ASCII が直接 commit される（端末入力の定石）。
+                        keyboardOptions = KeyboardOptions(
+                            autoCorrectEnabled = false,
+                            keyboardType = KeyboardType.Password,
+                            imeAction = ImeAction.None,
+                        ),
+                    )
+                }
             }
 
-            ExtraKeysRow(
-                stickyCtrl = stickyCtrl,
-                stickyAlt = stickyAlt,
-                onToggleCtrl = { stickyCtrl = !stickyCtrl },
-                onToggleAlt = { stickyAlt = !stickyAlt },
-                onKey = { action -> action(host); focusRequester.requestFocus() },
-            )
+            // 補助キー行はキーボードが開いているときだけ表示する。
+            if (imeVisible) {
+                ExtraKeysRow(
+                    stickyCtrl = stickyCtrl,
+                    stickyAlt = stickyAlt,
+                    onToggleCtrl = { stickyCtrl = !stickyCtrl },
+                    onToggleAlt = { stickyAlt = !stickyAlt },
+                    onKey = { action -> action(host); focusRequester.requestFocus() },
+                )
+            }
         }
     }
 
@@ -178,7 +190,39 @@ fun TerminalScreen(
             "文字を入力するとエコーされます。\r\n$ "
         val bytes = banner.toByteArray(Charsets.UTF_8)
         host.feed(bytes, bytes.size)
-        focusRequester.requestFocus()
+    }
+}
+
+/** 差分検出用のアンカー文字（ゼロ幅スペース）。入力フィールドは常にこの1文字だけを保持する。 */
+private const val INPUT_ANCHOR = "\u200B"
+
+/**
+ * 旧テキストと新テキストの差分を端末へ送る（IME と同期を保つためフィールドはリセットしない）。
+ * 共通接頭辞より後ろで、消えた分だけ Backspace(DEL)、増えた分だけ文字を送出する。
+ */
+private fun diffAndSend(
+    old: String,
+    new: String,
+    host: EmulatorHost,
+    ctrl: Boolean,
+    alt: Boolean,
+) {
+    if (old == new) return
+    var common = 0
+    val limit = minOf(old.length, new.length)
+    while (common < limit && old[common] == new[common]) common++
+    // 削除された分だけ Backspace
+    repeat(old.length - common) { host.sendBytes(byteArrayOf(0x7f)) }
+    // 追加された分を送出（改行は CR、それ以外はコードポイント）
+    val added = new.substring(common)
+    var i = 0
+    while (i < added.length) {
+        val cp = added.codePointAt(i)
+        i += Character.charCount(cp)
+        when (cp) {
+            '\n'.code, '\r'.code -> host.sendBytes(byteArrayOf(0x0d))
+            else -> host.sendCodePoint(cp, ctrl, alt)
+        }
     }
 }
 
