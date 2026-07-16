@@ -28,9 +28,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -50,15 +49,16 @@ fun ConnectScreen(
     onBack: () -> Unit,
     onConnect: (SshConnectionRequest, String, Boolean) -> Unit,
 ) {
-    var label by remember { mutableStateOf("") }
-    var host by remember { mutableStateOf("") }
-    var port by remember { mutableStateOf("22") }
-    var username by remember { mutableStateOf("") }
-    var authTab by remember { mutableIntStateOf(0) } // 0=パスワード, 1=秘密鍵
-    var password by remember { mutableStateOf("") }
-    var privateKey by remember { mutableStateOf("") }
-    var passphrase by remember { mutableStateOf("") }
-    var save by remember { mutableStateOf(true) }
+    // 画面回転でフォーム入力が消えないよう rememberSaveable で保持する。
+    var label by rememberSaveable { mutableStateOf("") }
+    var host by rememberSaveable { mutableStateOf("") }
+    var port by rememberSaveable { mutableStateOf("22") }
+    var username by rememberSaveable { mutableStateOf("") }
+    var authTab by rememberSaveable { mutableStateOf(0) } // 0=パスワード, 1=秘密鍵
+    var password by rememberSaveable { mutableStateOf("") }
+    var privateKey by rememberSaveable { mutableStateOf("") }
+    var passphrase by rememberSaveable { mutableStateOf("") }
+    var save by rememberSaveable { mutableStateOf(true) }
 
     val portNum = port.toIntOrNull()
     val canConnect = host.isNotBlank() && username.isNotBlank() &&
