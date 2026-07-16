@@ -63,12 +63,14 @@ class SessionController(
     /** 新しいセッションを開始する（既存セッションは閉じない）。 */
     fun connect(req: SshConnectionRequest, label: String) {
         SshSecurity.ensureBouncyCastle()
+        // 同一表示名が既にあれば「name (2)」「name (3)」… と一意化する。
+        val displayLabel = uniqueLabel(label)
         val id = SessionId(UUID.randomUUID().toString())
         val ssh = SshShellSession(TofuHostKeyVerifier(hostKeyStore))
         val transport = SshTransport(ssh)
         val emu = EmulatorHost(req.cols.coerceAtLeast(2), req.rows.coerceAtLeast(2), transport)
         val session = Session(id, emu, ssh, transport).apply {
-            this.label = label
+            this.label = displayLabel
             this.state = SessionState.Connecting
         }
         transport.onActivity = { onOutputActivity(id) }
@@ -77,7 +79,7 @@ class SessionController(
 
         sessions[id] = session
         activeId = id
-        sessionManager.upsert(SessionInfo(id, label, SessionState.Connecting))
+        sessionManager.upsert(SessionInfo(id, displayLabel, SessionState.Connecting))
         // 常駐通知の開始はフォアグラウンド（ユーザー操作）である connect() でのみ行う。
         SshForegroundService.start(appContext, notificationText())
 
@@ -169,6 +171,15 @@ class SessionController(
         val msg = "\r\n[31m[$text][0m\r\n"
         val bytes = msg.toByteArray(Charsets.UTF_8)
         s.host.feed(bytes, bytes.size)
+    }
+
+    /** 既存セッションと重複しない表示名を返す（重複時は「name (2)」…）。 */
+    private fun uniqueLabel(base: String): String {
+        val existing = sessions.values.map { it.label }.toSet()
+        if (base !in existing) return base
+        var n = 2
+        while ("$base ($n)" in existing) n++
+        return "$base ($n)"
     }
 
     private fun notificationText(): String {
