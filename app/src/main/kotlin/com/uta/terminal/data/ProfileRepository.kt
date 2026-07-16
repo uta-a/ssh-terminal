@@ -73,7 +73,7 @@ class ProfileRepository(private val dao: ProfileDao) {
 
     /** 一覧の並び順を永続化する（渡した id 順に sortOrder=0,1,2… を振る）。 */
     suspend fun reorder(orderedIds: List<String>) = withContext(Dispatchers.IO) {
-        orderedIds.forEachIndexed { index, id -> dao.updateSortOrder(id, index) }
+        dao.applyOrder(orderedIds)
     }
 
     /** 保存済み秘密を復号して認証情報を組み立てる。存在しなければ null。 */

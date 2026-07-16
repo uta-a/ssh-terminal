@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -23,6 +24,12 @@ interface ProfileDao {
 
     @Query("UPDATE profiles SET sortOrder = :order WHERE id = :id")
     suspend fun updateSortOrder(id: String, order: Int)
+
+    /** 渡した id 順に sortOrder=0,1,2… を 1 トランザクションで振り直す（途中失敗で不整合にしない）。 */
+    @Transaction
+    suspend fun applyOrder(orderedIds: List<String>) {
+        orderedIds.forEachIndexed { index, id -> updateSortOrder(id, index) }
+    }
 
     @Query("DELETE FROM profiles WHERE id = :id")
     suspend fun delete(id: String)
