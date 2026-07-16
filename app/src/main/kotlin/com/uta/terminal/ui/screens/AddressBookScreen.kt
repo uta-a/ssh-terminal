@@ -30,7 +30,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -41,7 +40,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -104,13 +102,12 @@ fun AddressBookScreen(
     allTags: List<com.uta.terminal.data.TagWithCount>,
     onAddNew: () -> Unit,
     onConnect: (HostProfile) -> Unit,
+    onNewSession: (HostProfile) -> Unit,
     onEdit: (HostProfile) -> Unit,
     onDuplicate: (HostProfile) -> Unit,
     onTogglePin: (HostProfile) -> Unit,
     onDelete: (String) -> Unit,
     onReorder: (List<String>) -> Unit,
-    onOpenSettings: () -> Unit,
-    onReturnToTerminal: (() -> Unit)? = null,
 ) {
     // 削除確認ダイアログの対象（null＝非表示）。スワイプX・⋮メニューの両経路からここに集約する。
     var confirmDelete by remember { mutableStateOf<HostProfile?>(null) }
@@ -158,25 +155,7 @@ fun AddressBookScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("ホスト一覧") },
-                // アクティブなセッションがあるときだけ、端末画面へ戻る矢印を出す。
-                navigationIcon = {
-                    if (onReturnToTerminal != null) {
-                        IconButton(onClick = onReturnToTerminal) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "端末に戻る",
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = "設定")
-                    }
-                },
-            )
+            TopAppBar(title = { Text("ホスト") })
         },
         floatingActionButton = {
             if (profiles.isNotEmpty()) {
@@ -232,6 +211,7 @@ fun AddressBookScreen(
                                     profile = p,
                                     dragging = false,
                                     onConnect = { onConnect(p) },
+                                    onNewSession = { onNewSession(p) },
                                     onEdit = { onEdit(p) },
                                     onDuplicate = { onDuplicate(p) },
                                     onTogglePin = { onTogglePin(p) },
@@ -290,6 +270,7 @@ fun AddressBookScreen(
                                         translationY = if (isDragging) dragState.draggingItemOffset else 0f
                                     },
                                 onConnect = { onConnect(p) },
+                                onNewSession = { onNewSession(p) },
                                 onEdit = { onEdit(p) },
                                 onDuplicate = { onDuplicate(p) },
                                 onTogglePin = { onTogglePin(p) },
@@ -329,6 +310,7 @@ private fun HostRow(
     dragging: Boolean,
     modifier: Modifier = Modifier,
     onConnect: () -> Unit,
+    onNewSession: () -> Unit,
     onEdit: () -> Unit,
     onDuplicate: () -> Unit,
     onTogglePin: () -> Unit,
@@ -451,6 +433,14 @@ private fun HostRow(
                         )
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("新しいセッション") },
+                            leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                onNewSession()
+                            },
+                        )
                         DropdownMenuItem(
                             text = { Text("編集") },
                             leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
@@ -588,7 +578,7 @@ private fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
                 }
             }
         },
-        placeholder = { Text("検索（名前・ホスト・ユーザー・タグ）") },
+        placeholder = { Text("検索") },
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp),

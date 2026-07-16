@@ -41,6 +41,8 @@ class SessionController(
         val host: EmulatorHost,
         val ssh: SshShellSession,
         val transport: SshTransport,
+        /** 由来した保存済みホスト（アドレス帳）の id。クイック接続や非保存は null。 */
+        val profileId: String?,
     ) {
         var label by mutableStateOf("")
         var state by mutableStateOf<SessionState>(SessionState.Connecting)
@@ -60,8 +62,8 @@ class SessionController(
     val label: String? get() = active?.label
     val busy: Boolean get() = active?.busy ?: false
 
-    /** 新しいセッションを開始する（既存セッションは閉じない）。 */
-    fun connect(req: SshConnectionRequest, label: String) {
+    /** 新しいセッションを開始する（既存セッションは閉じない）。[profileId] は由来した保存ホスト。 */
+    fun connect(req: SshConnectionRequest, label: String, profileId: String? = null) {
         SshSecurity.ensureBouncyCastle()
         // 同一表示名が既にあれば「name (2)」「name (3)」… と一意化する。
         val displayLabel = uniqueLabel(label)
@@ -69,7 +71,7 @@ class SessionController(
         val ssh = SshShellSession(TofuHostKeyVerifier(hostKeyStore))
         val transport = SshTransport(ssh)
         val emu = EmulatorHost(req.cols.coerceAtLeast(2), req.rows.coerceAtLeast(2), transport)
-        val session = Session(id, emu, ssh, transport).apply {
+        val session = Session(id, emu, ssh, transport, profileId).apply {
             this.label = displayLabel
             this.state = SessionState.Connecting
         }
@@ -111,6 +113,19 @@ class SessionController(
         }
     }
 
+    /**
+     * 指定ホスト（保存プロファイル）由来の生存セッションがあればアクティブにして true を返す。
+     * 無ければ false（呼び出し側で新規 connect する）。複数一致時は挿入順の先頭を選ぶ。
+     */
+    fun activateExistingForProfile(profileId: String): Boolean {
+        val order = sessionManager.sessions.value.map { it.id }
+        val target = order.firstOrNull { id ->
+            sessions[id]?.profileId == profileId
+        } ?: return false
+        setActive(target)
+        return true
+    }
+
     /** アクティブセッションを切断・破棄する。他に生きたセッションがあればそれをアクティブにする。 */
     fun disconnect() {
         val id = activeId ?: return
@@ -139,9 +154,15 @@ class SessionController(
 
     /** アクティブセッションの表示名を変更する。 */
     fun rename(newLabel: String) {
+        val id = activeId ?: return
+        rename(id, newLabel)
+    }
+
+    /** 指定セッションの表示名を変更する（一覧からの操作用。アクティブでなくてよい）。 */
+    fun rename(id: SessionId, newLabel: String) {
         val name = newLabel.trim()
         if (name.isEmpty()) return
-        val s = active ?: return
+        val s = sessions[id] ?: return
         s.label = name
         sessionManager.upsert(SessionInfo(s.id, name, s.state))
         refreshNotification()
