@@ -1,92 +1,179 @@
 package com.uta.terminal.ui.screens
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Button
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import com.uta.terminal.data.AuthKind
 import com.uta.terminal.data.HostProfile
 
 /**
- * アドレス帳（保存ホスト一覧）。ドロワーの「新規セッション」からの遷移先。
- * 行タップで保存済み情報を復号して接続、ゴミ箱で削除、＋ で新規接続フォームへ。
+ * ホスト一覧（アプリのホーム）。保存済み接続先をカードで一覧表示する。
+ * カードタップで保存済み情報を復号して接続、ゴミ箱で削除、＋/中央ボタンで新規接続フォームへ。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddressBookScreen(
     profiles: List<HostProfile>,
-    onBack: () -> Unit,
     onAddNew: () -> Unit,
     onConnect: (HostProfile) -> Unit,
     onDelete: (String) -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("保存ホスト") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る")
+                title = { Text("ホスト一覧") },
+                actions = {
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Filled.Settings, contentDescription = "設定")
                     }
                 },
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onAddNew) {
-                Icon(Icons.Filled.Add, contentDescription = "接続先を追加")
+            if (profiles.isNotEmpty()) {
+                FloatingActionButton(onClick = onAddNew) {
+                    Icon(Icons.Filled.Add, contentDescription = "接続先を追加")
+                }
             }
         },
     ) { padding ->
         if (profiles.isEmpty()) {
-            Box(
+            EmptyHosts(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    "保存ホストはまだありません。＋ から追加してください。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+                onAddNew = onAddNew,
+            )
         } else {
-            LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    horizontal = 12.dp,
+                    vertical = 12.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 items(profiles, key = { it.id }) { p ->
-                    val authText = if (p.authKind == AuthKind.KEY) "鍵" else "パスワード"
-                    ListItem(
-                        headlineContent = { Text(p.label) },
-                        supportingContent = {
-                            Text("${p.username}@${p.host}:${p.port}  ·  $authText")
-                        },
-                        trailingContent = {
-                            IconButton(onClick = { onDelete(p.id) }) {
-                                Icon(Icons.Filled.Delete, contentDescription = "削除")
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onConnect(p) },
+                    HostCard(
+                        profile = p,
+                        onConnect = { onConnect(p) },
+                        onDelete = { onDelete(p.id) },
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HostCard(
+    profile: HostProfile,
+    onConnect: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val authText = if (profile.authKind == AuthKind.KEY) "鍵" else "パスワード"
+    Card(
+        onClick = onConnect,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(),
+        elevation = CardDefaults.elevatedCardElevation(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Filled.Dns,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp),
+            )
+            Spacer(Modifier.size(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    profile.label,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "${profile.username}@${profile.host}:${profile.port}  ·  $authText",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = onDelete) {
+                Icon(
+                    Icons.Filled.Delete,
+                    contentDescription = "削除",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/** 保存が 0 件のときの中央導線。 */
+@Composable
+private fun EmptyHosts(modifier: Modifier = Modifier, onAddNew: () -> Unit) {
+    Box(modifier = modifier.padding(24.dp), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                Icons.Filled.Dns,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(48.dp),
+            )
+            Spacer(Modifier.height(16.dp))
+            Text(
+                "保存された接続先がありません",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "接続先を追加すると、ここから素早く接続できます",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(20.dp))
+            Button(onClick = onAddNew) {
+                Icon(Icons.Filled.Add, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text("接続先を追加")
             }
         }
     }

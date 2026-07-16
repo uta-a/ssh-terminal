@@ -87,7 +87,10 @@ private fun AppRoot(
                 },
                 onNewSession = {
                     scope.launch { drawerState.close() }
-                    navController.navigate(Routes.ADDRESS_BOOK)
+                    navController.navigate(Routes.ADDRESS_BOOK) {
+                        popUpTo(Routes.ADDRESS_BOOK) { inclusive = false }
+                        launchSingleTop = true
+                    }
                 },
                 onOpenSettings = {
                     scope.launch { drawerState.close() }
@@ -96,7 +99,7 @@ private fun AppRoot(
             )
         },
     ) {
-        NavHost(navController = navController, startDestination = Routes.TERMINAL) {
+        NavHost(navController = navController, startDestination = Routes.ADDRESS_BOOK) {
             composable(Routes.TERMINAL) {
                 TerminalScreen(
                     host = sessionController.host,
@@ -110,7 +113,6 @@ private fun AppRoot(
                 val profiles by profileRepository.profiles.collectAsState(initial = emptyList())
                 AddressBookScreen(
                     profiles = profiles,
-                    onBack = { navController.popBackStack() },
                     onAddNew = { navController.navigate(Routes.CONNECT) },
                     onConnect = { profile ->
                         scope.launch {
@@ -119,10 +121,11 @@ private fun AppRoot(
                                 profile.host, profile.port, profile.username, auth, cols = 80, rows = 24,
                             )
                             sessionController.connect(req, profile.label)
-                            navController.popBackStack(Routes.TERMINAL, inclusive = false)
+                            navController.navigate(Routes.TERMINAL) { launchSingleTop = true }
                         }
                     },
                     onDelete = { id -> scope.launch { profileRepository.delete(id) } },
+                    onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 )
             }
             composable(Routes.CONNECT) {
@@ -133,7 +136,11 @@ private fun AppRoot(
                             profileRepository.save(label, req.host, req.port, req.username, req.auth)
                         }
                         sessionController.connect(req, label)
-                        navController.popBackStack(Routes.TERMINAL, inclusive = false)
+                        // CONNECT を積み残さず、戻るでホスト一覧へ戻す。
+                        navController.navigate(Routes.TERMINAL) {
+                            popUpTo(Routes.ADDRESS_BOOK) { inclusive = false }
+                            launchSingleTop = true
+                        }
                     },
                 )
             }
