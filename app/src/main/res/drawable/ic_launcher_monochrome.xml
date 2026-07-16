@@ -3,16 +3,16 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Windows Terminal 風のプロンプト記号 >_（Material You アクセントのラベンダー）。 -->
+    <!-- テーマアイコン（Material You）用のモノクロ版 >_。色はシステムがテーマ色で塗る。 -->
     <path
-        android:strokeColor="#B4BEFE"
+        android:strokeColor="#FFFFFFFF"
         android:strokeWidth="9"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
         android:fillColor="#00000000"
         android:pathData="M35,38 L53,54 L35,70" />
     <path
-        android:strokeColor="#B4BEFE"
+        android:strokeColor="#FFFFFFFF"
         android:strokeWidth="9"
         android:strokeLineCap="round"
         android:fillColor="#00000000"
