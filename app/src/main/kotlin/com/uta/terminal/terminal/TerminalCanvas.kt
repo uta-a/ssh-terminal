@@ -28,9 +28,7 @@ import kotlin.math.ceil
  */
 @Composable
 fun TerminalCanvas(
-    transport: Transport,
-    host: EmulatorHost?,
-    onHostReady: (EmulatorHost) -> Unit,
+    host: EmulatorHost,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -53,22 +51,16 @@ fun TerminalCanvas(
             if (size.width <= 0 || size.height <= 0) return@onSizeChanged
             val cols = (size.width / cellW).toInt().coerceAtLeast(2)
             val rows = (size.height / cellH).toInt().coerceAtLeast(2)
-            val h = host
-            if (h == null) {
-                onHostReady(EmulatorHost(cols, rows, transport))
-            } else {
-                h.resize(cols, rows)
-            }
+            host.resize(cols, rows)
         },
     ) {
-        val h = host ?: return@Canvas
         // 再描画トリガの購読（値の変化で DrawScope が再実行される）。
         @Suppress("UNUSED_EXPRESSION")
-        h.frame
+        host.frame
         drawIntoCanvas { canvas ->
             renderScreen(
                 canvas.nativeCanvas,
-                h.emulator,
+                host.emulator,
                 paint,
                 cellW,
                 cellH,

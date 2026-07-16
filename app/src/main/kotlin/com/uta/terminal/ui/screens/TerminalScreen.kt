@@ -50,7 +50,8 @@ fun TerminalScreen(
     onOpenDrawer: () -> Unit,
 ) {
     val transport = remember { LocalEchoTransport() }
-    var host by remember { mutableStateOf<EmulatorHost?>(null) }
+    // host は一度だけ生成する。初期サイズは仮値で、実測後に onSizeChanged で resize する。
+    val host = remember(transport) { EmulatorHost(80, 24, transport) }
     var stickyCtrl by remember { mutableStateOf(false) }
     var stickyAlt by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
@@ -86,9 +87,7 @@ fun TerminalScreen(
                 shadowElevation = 2.dp,
             ) {
                 TerminalCanvas(
-                    transport = transport,
                     host = host,
-                    onHostReady = { host = it },
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(12.dp)
@@ -103,7 +102,7 @@ fun TerminalScreen(
                         .onKeyEvent { ke ->
                             val ev = ke.nativeKeyEvent
                             if (ev.action != AndroidKeyEvent.ACTION_DOWN) return@onKeyEvent false
-                            val h = host ?: return@onKeyEvent false
+                            val h = host
                             val ctrl = ev.isCtrlPressed || stickyCtrl
                             val alt = ev.isAltPressed || stickyAlt
                             val shift = ev.isShiftPressed
@@ -139,19 +138,18 @@ fun TerminalScreen(
                 stickyAlt = stickyAlt,
                 onToggleCtrl = { stickyCtrl = !stickyCtrl },
                 onToggleAlt = { stickyAlt = !stickyAlt },
-                onKey = { action -> host?.let(action); focusRequester.requestFocus() },
+                onKey = { action -> action(host); focusRequester.requestFocus() },
             )
         }
     }
 
-    LaunchedEffect(host) {
-        val h = host ?: return@LaunchedEffect
+    LaunchedEffect(Unit) {
         // 描画・ANSI 色・ワイド文字を一目で検証できる初期バナー（stdout 相当として流し込む）。
         val banner = "\u001b[1;32mTerminal PoC\u001b[0m — ローカルエコー\r\n" +
             "\u001b[36mcyan\u001b[0m \u001b[33myellow\u001b[0m \u001b[31mred\u001b[0m 日本語ワイド文字\r\n" +
             "文字を入力するとエコーされます。\r\n$ "
         val bytes = banner.toByteArray(Charsets.UTF_8)
-        h.feed(bytes, bytes.size)
+        host.feed(bytes, bytes.size)
         focusRequester.requestFocus()
     }
 }
