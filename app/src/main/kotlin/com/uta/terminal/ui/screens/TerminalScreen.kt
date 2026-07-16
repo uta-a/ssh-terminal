@@ -22,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
@@ -59,13 +60,11 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
 import com.uta.terminal.terminal.EmulatorHost
 import com.uta.terminal.terminal.LocalEchoTransport
 import com.uta.terminal.terminal.TerminalCanvas
 import com.uta.terminal.terminal.TerminalPalette
-import kotlinx.coroutines.delay
 
 /**
  * 端末ホーム画面。PoC ではローカルエコー Transport で `TerminalEmulator` を駆動し、
@@ -83,18 +82,17 @@ fun TerminalScreen(
     var stickyCtrl by remember { mutableStateOf(false) }
     var stickyAlt by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+    // 入力中の 1 行（IME 変換中テキストを含む）。Enter で送信し空に戻す。
+    var inputTfv by remember { mutableStateOf(TextFieldValue("")) }
     val focusRequester = remember { FocusRequester() }
     val density = LocalDensity.current
     // ソフトキーボードが出ているか（補助キー行の表示可否に使う）。
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
 
-    // 出力ストリーム中（＝frame が更新され続けている間）はローディング表示にする。
-    var running by remember { mutableStateOf(false) }
-    LaunchedEffect(host.frame) {
-        running = true
-        delay(500)
-        running = false
-    }
+    // 上部アクセントラインのローディング表示。SSH 先でコマンド実行中のみ true にする想定。
+    // 入力（ローカルエコー）では光らせない。TODO: SSH 実装時に実行状態と接続する。
+    @Suppress("UNUSED")
+    val running by remember { mutableStateOf(false) }
 
     fun clearSticky() { stickyCtrl = false; stickyAlt = false }
     fun disconnect() {
@@ -180,56 +178,41 @@ fun TerminalScreen(
                 Box(modifier = Modifier.fillMaxSize()) {
                     TerminalCanvas(
                         host = host,
+                        pendingInput = inputTfv.text,
+                        allowResize = !imeVisible,
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(12.dp),
                     )
-                    // 透明な入力フィールド：タップでキーボード表示、テキスト/Enter/Backspace を捕捉する。
-                    // Canvas は編集器ではないため IME を開けない。フリック等の日本語入力にも対応するため
-                    // 通常キーボード型にし、IME の「変換確定」した文字だけを端末へ送る（合成中は送らない）。
-                    var tfv by remember {
-                        mutableStateOf(TextFieldValue(INPUT_ANCHOR, TextRange(INPUT_ANCHOR.length)))
-                    }
-                    // 前回までに端末へ送った「確定済みテキスト」（anchor を含む）。
-                    var committedSoFar by remember { mutableStateOf(INPUT_ANCHOR) }
-
-                    // カーソル・選択ハンドルを透明化（左上に出るカーソルを消す）。
+                    // 透明な入力フィールド：タップでキーボード表示。入力中の文字（IME 変換含む）は
+                    // フィールドが保持し、Canvas がカーソル位置にインライン表示する。Enter で 1 行を送信。
+                    // カーソル・選択ハンドルは透明化（左上に出るカーソルを消す）。
                     val transparentSelection = TextSelectionColors(
                         handleColor = Color.Transparent,
                         backgroundColor = Color.Transparent,
                     )
                     CompositionLocalProvider(LocalTextSelectionColors provides transparentSelection) {
                         BasicTextField(
-                            value = tfv,
-                            onValueChange = { nv ->
-                                // 合成（変換）中の範囲は未確定。確定済み部分だけを対象に差分送出する。
-                                val comp = nv.composition
-                                val committedEnd =
-                                    if (comp != null && comp.length > 0) comp.start else nv.text.length
-                                val committed = nv.text.substring(0, committedEnd.coerceIn(0, nv.text.length))
-                                diffAndSend(committedSoFar, committed, host, stickyCtrl, stickyAlt)
-                                clearSticky()
-                                committedSoFar = committed
-
-                                // IME とのデシンクを避けるため通常はフィールドを維持（リセットしない）。
-                                // 空になった時だけ anchor を再シードして backspace を継続可能に保ち、
-                                // 合成なしで肥大化した時だけ縮約する。
-                                if (nv.text.isEmpty() || (comp == null && nv.text.length > 256)) {
-                                    tfv = TextFieldValue(INPUT_ANCHOR, TextRange(INPUT_ANCHOR.length))
-                                    committedSoFar = INPUT_ANCHOR
-                                } else {
-                                    tfv = nv
-                                }
-                            },
+                            value = inputTfv,
+                            onValueChange = { inputTfv = it },
                             modifier = Modifier
                                 .fillMaxSize()
                                 .focusRequester(focusRequester),
                             textStyle = TextStyle(color = Color.Transparent),
                             cursorBrush = SolidColor(Color.Transparent),
-                            // フリック/日本語入力を許可（変換確定分のみ送出する方式）。
+                            singleLine = true,
+                            // フリック等の日本語入力を許可。Enter（Go）で行を確定送信する。
                             keyboardOptions = KeyboardOptions(
                                 autoCorrectEnabled = false,
-                                imeAction = ImeAction.None,
+                                imeAction = ImeAction.Go,
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onGo = {
+                                    val line = inputTfv.text
+                                    val bytes = (line + "\r").toByteArray(Charsets.UTF_8)
+                                    host.sendBytes(bytes)
+                                    inputTfv = TextFieldValue("")
+                                },
                             ),
                         )
                     }
@@ -256,39 +239,6 @@ fun TerminalScreen(
             "文字を入力するとエコーされます。\r\n$ "
         val bytes = banner.toByteArray(Charsets.UTF_8)
         host.feed(bytes, bytes.size)
-    }
-}
-
-/** 差分検出用のアンカー文字（ゼロ幅スペース）。入力フィールドは常にこの1文字だけを保持する。 */
-private const val INPUT_ANCHOR = "\u200B"
-
-/**
- * 旧テキストと新テキストの差分を端末へ送る（IME と同期を保つためフィールドはリセットしない）。
- * 共通接頭辞より後ろで、消えた分だけ Backspace(DEL)、増えた分だけ文字を送出する。
- */
-private fun diffAndSend(
-    old: String,
-    new: String,
-    host: EmulatorHost,
-    ctrl: Boolean,
-    alt: Boolean,
-) {
-    if (old == new) return
-    var common = 0
-    val limit = minOf(old.length, new.length)
-    while (common < limit && old[common] == new[common]) common++
-    // 削除された分だけ Backspace
-    repeat(old.length - common) { host.sendBytes(byteArrayOf(0x7f)) }
-    // 追加された分を送出（改行は CR、それ以外はコードポイント）
-    val added = new.substring(common)
-    var i = 0
-    while (i < added.length) {
-        val cp = added.codePointAt(i)
-        i += Character.charCount(cp)
-        when (cp) {
-            '\n'.code, '\r'.code -> host.sendBytes(byteArrayOf(0x0d))
-            else -> host.sendCodePoint(cp, ctrl, alt)
-        }
     }
 }
 

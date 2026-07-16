@@ -33,6 +33,8 @@ import kotlin.math.ceil
 @Composable
 fun TerminalCanvas(
     host: EmulatorHost,
+    pendingInput: String,
+    allowResize: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -51,13 +53,14 @@ fun TerminalCanvas(
     val surfaceArgb = TerminalPalette.BACKGROUND
     val cursorArgb = TerminalPalette.CURSOR
 
-    // キーボード開閉アニメ中はサイズが毎フレーム変わる。リサイズ（＝エミュレータのリフロー）は
-    // 高コストなので、収束するまでデバウンスして 1 回だけ適用する。
+    // キーボード表示中（allowResize=false）はエミュレータをリサイズしない。
+    // リフロー／再レイアウトを挟まないことで、キーボードが静的な端末の上を素早くスライドする。
     var pendingSize by remember { mutableStateOf(IntSize.Zero) }
-    LaunchedEffect(pendingSize) {
+    LaunchedEffect(pendingSize, allowResize) {
+        if (!allowResize) return@LaunchedEffect
         val s = pendingSize
         if (s.width <= 0 || s.height <= 0) return@LaunchedEffect
-        delay(90)
+        delay(60)
         val cols = (s.width / cellW).toInt().coerceAtLeast(2)
         val rows = (s.height / cellH).toInt().coerceAtLeast(2)
         host.resize(cols, rows)
@@ -66,7 +69,7 @@ fun TerminalCanvas(
     Canvas(
         modifier = modifier.onSizeChanged { size -> pendingSize = size },
     ) {
-        // 再描画トリガの購読（値の変化で DrawScope が再実行される）。
+        // 再描画トリガの購読（frame と pendingInput の変化で DrawScope を再実行）。
         @Suppress("UNUSED_EXPRESSION")
         host.frame
         drawIntoCanvas { canvas ->
@@ -80,6 +83,7 @@ fun TerminalCanvas(
                 defaultFgArgb = defaultFgArgb,
                 surfaceArgb = surfaceArgb,
                 cursorArgb = cursorArgb,
+                pendingInput = pendingInput,
             )
         }
     }
@@ -97,6 +101,7 @@ private fun renderScreen(
     defaultFgArgb: Int,
     surfaceArgb: Int,
     cursorArgb: Int,
+    pendingInput: String,
 ) {
     val screen = emu.screen
     val rows = emu.mRows
@@ -164,26 +169,47 @@ private fun renderScreen(
         }
     }
 
-    // カーソル
-    if (emu.shouldCursorBeVisible()) {
-        val cc = emu.cursorCol
-        val cr = emu.cursorRow
-        if (cc in 0 until cols && cr in 0 until rows) {
-            val left = cc * cellW
-            val topY = cr * cellH
-            paint.style = Paint.Style.FILL
-            paint.color = cursorArgb
-            paint.alpha = 0x66 // 文字が透けるブロックカーソル
-            when (emu.cursorStyle) {
-                TerminalEmulator.TERMINAL_CURSOR_STYLE_UNDERLINE ->
-                    canvas.drawRect(left, topY + cellH - 3f, left + cellW, topY + cellH, paint)
-                TerminalEmulator.TERMINAL_CURSOR_STYLE_BAR ->
-                    canvas.drawRect(left, topY, left + 3f, topY + cellH, paint)
-                else ->
-                    canvas.drawRect(left, topY, left + cellW, topY + cellH, paint)
+    // 入力中テキスト（未送信）をカーソル位置からインライン表示し、キャレットをその末尾に置く。
+    var caretCol = emu.cursorCol
+    var caretRow = emu.cursorRow
+    if (pendingInput.isNotEmpty()) {
+        paint.color = defaultFgArgb
+        paint.alpha = (defaultFgArgb ushr 24)
+        var i = 0
+        while (i < pendingInput.length) {
+            val cp = pendingInput.codePointAt(i)
+            i += Character.charCount(cp)
+            if (cp == '\n'.code || cp == '\r'.code) {
+                caretCol = 0; caretRow += 1
+                continue
             }
-            paint.alpha = 0xff
+            if (caretCol >= cols) { caretCol = 0; caretRow += 1 }
+            if (caretRow in 0 until rows) {
+                canvas.drawText(String(Character.toChars(cp)), caretCol * cellW, caretRow * cellH + baseline, paint)
+            }
+            caretCol += 1
         }
+        if (caretCol >= cols) { caretCol = 0; caretRow += 1 }
+    }
+
+    // キャレット（ブロックカーソル）
+    if ((emu.shouldCursorBeVisible() || pendingInput.isNotEmpty()) &&
+        caretCol in 0 until cols && caretRow in 0 until rows
+    ) {
+        val left = caretCol * cellW
+        val topY = caretRow * cellH
+        paint.style = Paint.Style.FILL
+        paint.color = cursorArgb
+        paint.alpha = 0x66 // 文字が透けるブロックカーソル
+        when (emu.cursorStyle) {
+            TerminalEmulator.TERMINAL_CURSOR_STYLE_UNDERLINE ->
+                canvas.drawRect(left, topY + cellH - 3f, left + cellW, topY + cellH, paint)
+            TerminalEmulator.TERMINAL_CURSOR_STYLE_BAR ->
+                canvas.drawRect(left, topY, left + 3f, topY + cellH, paint)
+            else ->
+                canvas.drawRect(left, topY, left + cellW, topY + cellH, paint)
+        }
+        paint.alpha = 0xff
     }
 }
 
