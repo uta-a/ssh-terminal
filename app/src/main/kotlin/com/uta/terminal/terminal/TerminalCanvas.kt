@@ -34,11 +34,17 @@ import kotlin.math.ceil
 fun TerminalCanvas(
     host: EmulatorHost,
     pendingInput: String,
+    composingStart: Int,
+    composingEnd: Int,
+    defaultFgArgb: Int,
+    composingColorArgb: Int,
+    fontScale: Float,
     allowResize: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    val textSizePx = with(density) { 14.sp.toPx() }
+    // 基準 14sp にピンチ操作の倍率を掛けた実サイズ。倍率が変わるとセル寸法も再計算される。
+    val textSizePx = with(density) { (14f * fontScale).sp.toPx() }
 
     val paint = remember {
         Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE }
@@ -48,15 +54,15 @@ fun TerminalCanvas(
     val cellW = remember(textSizePx) { paint.measureText("M").coerceAtLeast(1f) }
     val cellH = remember(textSizePx) { ceil(fm.descent - fm.ascent).coerceAtLeast(1f) }
 
-    // 端末エリアは参照デザインに合わせた calm な固定パレット（UI クロムの Dynamic Color とは分離）。
-    val defaultFgArgb = TerminalPalette.DIM_FOREGROUND
+    // 端末の地色・カーソルは calm な固定色。色指定なしの既定文字色は Material You 由来（呼び出し側から受け取る）。
     val surfaceArgb = TerminalPalette.BACKGROUND
     val cursorArgb = TerminalPalette.CURSOR
 
     // キーボード表示中（allowResize=false）はエミュレータをリサイズしない。
     // リフロー／再レイアウトを挟まないことで、キーボードが静的な端末の上を素早くスライドする。
     var pendingSize by remember { mutableStateOf(IntSize.Zero) }
-    LaunchedEffect(pendingSize, allowResize) {
+    // cellW/cellH をキーに含め、ピンチでフォントサイズ（=セル寸法）が変わったら桁数/行数を再計算する。
+    LaunchedEffect(pendingSize, allowResize, cellW, cellH) {
         if (!allowResize) return@LaunchedEffect
         val s = pendingSize
         if (s.width <= 0 || s.height <= 0) return@LaunchedEffect
@@ -84,6 +90,9 @@ fun TerminalCanvas(
                 surfaceArgb = surfaceArgb,
                 cursorArgb = cursorArgb,
                 pendingInput = pendingInput,
+                composingStart = composingStart,
+                composingEnd = composingEnd,
+                composingColorArgb = composingColorArgb,
             )
         }
     }
@@ -102,6 +111,9 @@ private fun renderScreen(
     surfaceArgb: Int,
     cursorArgb: Int,
     pendingInput: String,
+    composingStart: Int,
+    composingEnd: Int,
+    composingColorArgb: Int,
 ) {
     val screen = emu.screen
     val rows = emu.mRows
@@ -174,17 +186,19 @@ private fun renderScreen(
     var caretCol = emu.cursorCol
     var caretRow = emu.cursorRow
     if (pendingInput.isNotEmpty()) {
-        // 入力中テキストは確定済み文字と区別できる専用色で表示する。
-        paint.color = TerminalPalette.INPUT_PENDING
-        paint.alpha = (TerminalPalette.INPUT_PENDING ushr 24)
         var i = 0
         while (i < pendingInput.length) {
+            val startOffset = i
             val cp = pendingInput.codePointAt(i)
             i += Character.charCount(cp)
             if (cp == '\n'.code || cp == '\r'.code) {
                 caretCol = 0; caretRow += 1
                 continue
             }
+            // 入力中（IME 変換中・未確定）は明るめ、変換確定した文字は既定 Material You 色に落ち着く。
+            // 送信するとテキストは端末バッファへ移り、そこでも同じ既定色で描かれる（確定=送信で同色）。
+            val composing = startOffset in composingStart until composingEnd
+            paint.color = if (composing) composingColorArgb else defaultFgArgb
             val w = if (isWideCodePoint(cp)) 2 else 1
             if (caretCol + w > cols) { caretCol = 0; caretRow += 1 }
             if (caretRow in 0 until rows) {

@@ -2,15 +2,17 @@ package com.uta.terminal.ui.screens
 
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -34,6 +36,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -47,6 +50,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -54,8 +58,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -65,12 +72,13 @@ import com.uta.terminal.terminal.EmulatorHost
 import com.uta.terminal.terminal.LocalEchoTransport
 import com.uta.terminal.terminal.TerminalCanvas
 import com.uta.terminal.terminal.TerminalPalette
+import kotlin.math.roundToInt
 
 /**
  * 端末ホーム画面。PoC ではローカルエコー Transport で `TerminalEmulator` を駆動し、
  * 浮きカードの中に自作 Compose Canvas（[TerminalCanvas]）で描画する。
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun TerminalScreen(
     currentSessionLabel: String?,
@@ -84,10 +92,13 @@ fun TerminalScreen(
     var menuOpen by remember { mutableStateOf(false) }
     // 入力中の 1 行（IME 変換中テキストを含む）。Enter で送信し空に戻す。
     var inputTfv by remember { mutableStateOf(TextFieldValue("")) }
+    // 端末フォントの表示倍率（ピンチで拡縮、⋮ メニューでリセット）。
+    var fontScale by remember { mutableFloatStateOf(1f) }
     val focusRequester = remember { FocusRequester() }
     val density = LocalDensity.current
-    // ソフトキーボードが出ているか（補助キー行の表示可否に使う）。
-    val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    // ソフトキーボードが出ているか（補助キー行の表示可否に使う）。アニメの途中値ではなく
+    // 最終目標値（imeAnimationTarget）で判定し、キーボード位置へスライドせず即スナップさせる。
+    val imeVisible = WindowInsets.imeAnimationTarget.getBottom(density) > 0
 
     // 上部アクセントラインのローディング表示。SSH 先でコマンド実行中のみ true にする想定。
     // 入力（ローカルエコー）では光らせない。TODO: SSH 実装時に実行状態と接続する。
@@ -129,6 +140,17 @@ fun TerminalScreen(
                         Icon(Icons.Filled.MoreVert, contentDescription = "その他")
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        // 現在の表示サイズ（100% = 基準）。行自体は情報表示なので無効化。
+                        DropdownMenuItem(
+                            text = { Text("表示サイズ ${(fontScale * 100).roundToInt()}%") },
+                            onClick = {},
+                            enabled = false,
+                        )
+                        DropdownMenuItem(
+                            text = { Text("表示サイズをリセット") },
+                            onClick = { fontScale = 1f; menuOpen = false },
+                        )
+                        HorizontalDivider()
                         DropdownMenuItem(
                             text = { Text("セッションを切断") },
                             onClick = { disconnect() },
@@ -149,7 +171,7 @@ fun TerminalScreen(
                 .padding(top = padding.calculateTopPadding())
                 // 下端はナビゲーションバーと IME の大きい方に合わせる。
                 // キーボード表示時はこの padding が持ち上がり、補助キー行がキーボード上端に載る。
-                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime)),
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.imeAnimationTarget)),
         ) {
             // 上部アクセントライン：実行中（出力ストリーム中）はローディングアニメ、待機中は静的な細線。
             if (running) {
@@ -175,10 +197,39 @@ fun TerminalScreen(
                 color = androidx.compose.ui.graphics.Color(TerminalPalette.BACKGROUND),
                 shadowElevation = 2.dp,
             ) {
-                Box(modifier = Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        // 2 本指ピンチで表示倍率を変更する。倍率は 0.5〜3.0 倍にクランプ。
+                        // 親 Box に置くことで、透明入力フィールドのタップ（キーボード表示）は素通しし、
+                        // ピンチ（zoom≠1）のときだけ倍率を更新する。
+                        .pointerInput(Unit) {
+                            detectTransformGestures { _, _, zoom, _ ->
+                                if (zoom != 1f) {
+                                    fontScale = (fontScale * zoom).coerceIn(0.5f, 3.0f)
+                                }
+                            }
+                        },
+                ) {
+                    // 既定文字色＝もとの Material You 色（primary）。変換確定したインライン文字も、
+                    // 送信して端末に出た文字もこの色で描く（確定=送信で同色に落ち着く）。
+                    val baseFgArgb = MaterialTheme.colorScheme.primary.toArgb()
+                    // 入力中（IME 変換中）だけ primary を白へ寄せて明るくし、目立たせる。
+                    val composingColorArgb = lerp(
+                        MaterialTheme.colorScheme.primary,
+                        Color.White,
+                        0.62f,
+                    ).toArgb()
+                    // IME 変換中（未確定）の範囲。変換確定でこの範囲が消え、色が既定色へ落ち着く。
+                    val composition = inputTfv.composition
                     TerminalCanvas(
                         host = host,
                         pendingInput = inputTfv.text,
+                        composingStart = composition?.start ?: -1,
+                        composingEnd = composition?.end ?: -1,
+                        defaultFgArgb = baseFgArgb,
+                        composingColorArgb = composingColorArgb,
+                        fontScale = fontScale,
                         allowResize = !imeVisible,
                         modifier = Modifier
                             .fillMaxSize()

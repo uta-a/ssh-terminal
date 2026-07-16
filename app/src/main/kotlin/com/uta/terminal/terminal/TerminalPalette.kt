@@ -17,8 +17,8 @@ object TerminalPalette {
     /** カーソル色（Catppuccin lavender）。 */
     const val CURSOR: Int = 0xFFB4BEFE.toInt()
 
-    /** 入力中（未送信）テキストのインライン表示色。確定済み文字と区別する（Catppuccin peach）。 */
-    const val INPUT_PENDING: Int = 0xFFFAB387.toInt()
+    // 入力中（未送信・確定済み）テキストのインライン色は Material You 由来の明色を
+    // 呼び出し側（TerminalScreen）で算出して渡す。端末カードは常にダークなので明るめに寄せる。
 
     /**
      * ANSI 16 色（index 0..15）。Catppuccin Mocha。
