@@ -61,6 +61,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -115,24 +116,27 @@ fun TerminalScreen(
     }
 
     // Ctrl/Alt sticky はセッション固有。切替で別ホストへ引き継がない（host をキーにする）。
-    var stickyCtrl by remember(host) { mutableStateOf(false) }
-    var stickyAlt by remember(host) { mutableStateOf(false) }
+    // 回転でも失わないよう rememberSaveable。
+    var stickyCtrl by rememberSaveable(host) { mutableStateOf(false) }
+    var stickyAlt by rememberSaveable(host) { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
-    // フルスクリーン（上部タイトルバー非表示）。戻るキーで解除。
-    var fullscreen by remember { mutableStateOf(false) }
+    // フルスクリーン（上部タイトルバー非表示）。戻るキーで解除。回転で保持。
+    var fullscreen by rememberSaveable { mutableStateOf(false) }
     // セッション名変更ダイアログ。
     var renameOpen by remember { mutableStateOf(false) }
     // パスワード入力ダイアログ（sudo 等。インライン平文表示せずに送る）。
     var passDialogOpen by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
     // 入力中の 1 行（IME 変換中テキストを含む）。Enter で送信し空に戻す。
-    // host をキーにし、セッション切替で未送信の入力行を別ホストへ持ち越さない（誤送信防止）。
-    var inputTfv by remember(host) { mutableStateOf(TextFieldValue("")) }
-    // 端末フォントの表示倍率（ピンチで拡縮、⋮ メニューでリセット）。表示設定なので全セッション共通。
-    var fontScale by remember { mutableFloatStateOf(1f) }
-    // 履歴スクロール量（行）。0＝最新（ライブ画面）。上方向ドラッグで増える。セッション固有。
-    var scrollOffset by remember(host) { mutableIntStateOf(0) }
-    // ドラッグ px の端数を持ち越して行換算する。セッション固有。
+    // host をキーにし、セッション切替で未送信の入力行を別ホストへ持ち越さない（誤送信防止）。回転で保持。
+    var inputTfv by rememberSaveable(host, stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(""))
+    }
+    // 端末フォントの表示倍率（ピンチで拡縮、⋮ メニューでリセット）。表示設定なので全セッション共通。回転で保持。
+    var fontScale by rememberSaveable { mutableStateOf(1f) }
+    // 履歴スクロール量（行）。0＝最新（ライブ画面）。上方向ドラッグで増える。セッション固有。回転で保持。
+    var scrollOffset by rememberSaveable(host) { mutableStateOf(0) }
+    // ドラッグ px の端数を持ち越して行換算する。セッション固有（回転で消えても実害なし）。
     var scrollAccumPx by remember(host) { mutableFloatStateOf(0f) }
     // TerminalCanvas が報告するセル高（px→行の換算に使う）。
     var cellHeightPx by remember { mutableFloatStateOf(1f) }
@@ -372,7 +376,27 @@ fun TerminalScreen(
                         ) {
                             BasicTextField(
                                 value = inputTfv,
-                                onValueChange = { inputTfv = it },
+                                onValueChange = { newV ->
+                                    // Ctrl/Alt sticky が有効なら、挿入された 1 文字を制御コード
+                                    // （Ctrl-x／Alt-x）として即送信し、バッファへは入れず消費する。
+                                    // 対象は ASCII 印字文字のみ（CJK 変換中などは通常入力として扱う）。
+                                    val old = inputTfv.text
+                                    val consumed = if ((stickyCtrl || stickyAlt) &&
+                                        newV.text.length == old.length + 1
+                                    ) {
+                                        var i = 0
+                                        while (i < old.length && old[i] == newV.text[i]) i++
+                                        val ch = newV.text[i]
+                                        if (ch.code in 0x20..0x7E) {
+                                            host.sendCodePoint(ch.code, stickyCtrl, stickyAlt)
+                                            stickyCtrl = false
+                                            stickyAlt = false
+                                            scrollOffset = 0; scrollAccumPx = 0f
+                                            true
+                                        } else false
+                                    } else false
+                                    if (!consumed) inputTfv = newV
+                                },
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .focusRequester(focusRequester),
@@ -423,6 +447,8 @@ fun TerminalScreen(
                         onPasswordEntry = { passDialogOpen = true },
                         onKey = { action ->
                             action(host); focusRequester.requestFocus()
+                            // 修飾キーは one-shot。特殊キー送出後に解除する。
+                            stickyCtrl = false; stickyAlt = false
                             scrollOffset = 0; scrollAccumPx = 0f
                         },
                     )
@@ -529,10 +555,11 @@ private fun ExtraKeysRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                ArrowKey("←", Modifier.weight(1f)) { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_LEFT, false, false, false) } }
-                ArrowKey("↓", Modifier.weight(1f)) { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_DOWN, false, false, false) } }
-                ArrowKey("↑", Modifier.weight(1f)) { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_UP, false, false, false) } }
-                ArrowKey("→", Modifier.weight(1f)) { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_RIGHT, false, false, false) } }
+                // sticky Ctrl/Alt を矢印にも適用（Ctrl+←/Alt+→ 等の単語移動）。送出後に onKey が解除する。
+                ArrowKey("←", Modifier.weight(1f)) { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_LEFT, stickyCtrl, stickyAlt, false) } }
+                ArrowKey("↓", Modifier.weight(1f)) { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_DOWN, stickyCtrl, stickyAlt, false) } }
+                ArrowKey("↑", Modifier.weight(1f)) { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_UP, stickyCtrl, stickyAlt, false) } }
+                ArrowKey("→", Modifier.weight(1f)) { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_RIGHT, stickyCtrl, stickyAlt, false) } }
             }
         }
     }
