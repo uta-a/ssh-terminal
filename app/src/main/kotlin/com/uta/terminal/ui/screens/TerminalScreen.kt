@@ -34,6 +34,7 @@ import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -122,6 +123,8 @@ fun TerminalScreen(
     var menuOpen by remember { mutableStateOf(false) }
     // フルスクリーン（上部タイトルバー非表示）。戻るキーで解除。回転で保持。
     var fullscreen by rememberSaveable { mutableStateOf(false) }
+    // 補助キー行（Esc/Ctrl/矢印等）の表示。⋮ メニューで切替。回転で保持。
+    var showExtraKeys by rememberSaveable { mutableStateOf(true) }
     // セッション名変更ダイアログ。
     var renameOpen by remember { mutableStateOf(false) }
     // パスワード入力ダイアログ（sudo 等。インライン平文表示せずに送る）。
@@ -198,6 +201,10 @@ fun TerminalScreen(
                     }
                 },
                 actions = {
+                    // フルスクリーンは ⋮ の左に独立アイコンとして置く。
+                    IconButton(onClick = { fullscreen = true }) {
+                        Icon(Icons.Filled.Fullscreen, contentDescription = "フルスクリーン")
+                    }
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(Icons.Filled.MoreVert, contentDescription = "その他")
                     }
@@ -207,8 +214,8 @@ fun TerminalScreen(
                             onClick = { menuOpen = false; renameOpen = true },
                         )
                         DropdownMenuItem(
-                            text = { Text("フルスクリーン") },
-                            onClick = { menuOpen = false; fullscreen = true },
+                            text = { Text(if (showExtraKeys) "補助キーを隠す" else "補助キーを表示") },
+                            onClick = { menuOpen = false; showExtraKeys = !showExtraKeys },
                         )
                         HorizontalDivider()
                         // 現在の表示サイズ（100% = 基準）。行自体は情報表示なので無効化。
@@ -443,8 +450,8 @@ fun TerminalScreen(
                     }
                 }
 
-                // 補助キー行はキーボードが開いているときだけ表示する。
-                if (imeVisible) {
+                // 補助キー行はキーボードが開いていて、かつ ⋮ で表示 ON のときだけ出す。
+                if (imeVisible && showExtraKeys) {
                     ExtraKeysRow(
                         stickyCtrl = stickyCtrl,
                         stickyAlt = stickyAlt,
