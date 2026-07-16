@@ -174,8 +174,9 @@ private fun renderScreen(
     var caretCol = emu.cursorCol
     var caretRow = emu.cursorRow
     if (pendingInput.isNotEmpty()) {
-        paint.color = defaultFgArgb
-        paint.alpha = (defaultFgArgb ushr 24)
+        // 入力中テキストは確定済み文字と区別できる専用色で表示する。
+        paint.color = TerminalPalette.INPUT_PENDING
+        paint.alpha = (TerminalPalette.INPUT_PENDING ushr 24)
         var i = 0
         while (i < pendingInput.length) {
             val cp = pendingInput.codePointAt(i)
