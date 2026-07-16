@@ -10,6 +10,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -142,6 +143,8 @@ private fun AppRoot(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val sessions by sessionManager.sessions.collectAsState()
+    // 下タブの並び順設定（true でホストを先頭に）。
+    val hostTabFirst by settingsStore.hostTabFirst.collectAsState(initial = false)
 
     // 起動タブは状況で切替：生存セッションがあれば「セッション」、無ければ「ホスト」。
     val startTab = remember {
@@ -187,18 +190,30 @@ private fun AppRoot(
                             restoreState = true
                         }
                     }
-                    NavigationBarItem(
-                        selected = currentRoute == Routes.SESSIONS,
-                        onClick = { switchTab(Routes.SESSIONS) },
-                        icon = { Icon(Icons.Filled.Terminal, contentDescription = null) },
-                        label = { Text("セッション") },
-                    )
-                    NavigationBarItem(
-                        selected = currentRoute == Routes.ADDRESS_BOOK,
-                        onClick = { switchTab(Routes.ADDRESS_BOOK) },
-                        icon = { Icon(Icons.Filled.Dns, contentDescription = null) },
-                        label = { Text("ホスト") },
-                    )
+                    // セッション/ホストの並びは設定で入れ替える（設定タブは常に末尾）。
+                    val sessionsItem: @Composable RowScope.() -> Unit = {
+                        NavigationBarItem(
+                            selected = currentRoute == Routes.SESSIONS,
+                            onClick = { switchTab(Routes.SESSIONS) },
+                            icon = { Icon(Icons.Filled.Terminal, contentDescription = null) },
+                            label = { Text("セッション") },
+                        )
+                    }
+                    val hostsItem: @Composable RowScope.() -> Unit = {
+                        NavigationBarItem(
+                            selected = currentRoute == Routes.ADDRESS_BOOK,
+                            onClick = { switchTab(Routes.ADDRESS_BOOK) },
+                            icon = { Icon(Icons.Filled.Dns, contentDescription = null) },
+                            label = { Text("ホスト") },
+                        )
+                    }
+                    if (hostTabFirst) {
+                        hostsItem()
+                        sessionsItem()
+                    } else {
+                        sessionsItem()
+                        hostsItem()
+                    }
                     NavigationBarItem(
                         selected = currentRoute == Routes.SETTINGS,
                         onClick = { switchTab(Routes.SETTINGS) },
@@ -359,6 +374,10 @@ private fun AppRoot(
                     biometricEnabled = biometricEnabled,
                     onBiometricChange = { enabled ->
                         scope.launch { settingsStore.setBiometricEnabled(enabled) }
+                    },
+                    hostTabFirst = hostTabFirst,
+                    onHostTabFirstChange = { enabled ->
+                        scope.launch { settingsStore.setHostTabFirst(enabled) }
                     },
                     onOpenKeys = { navController.navigate(Routes.KEYS) },
                 )

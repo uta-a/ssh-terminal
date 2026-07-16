@@ -30,6 +30,8 @@ import androidx.compose.ui.unit.dp
 fun SettingsScreen(
     biometricEnabled: Boolean,
     onBiometricChange: (Boolean) -> Unit,
+    hostTabFirst: Boolean,
+    onHostTabFirstChange: (Boolean) -> Unit,
     onOpenKeys: () -> Unit,
     onBack: (() -> Unit)? = null,
 ) {
@@ -57,6 +59,21 @@ fun SettingsScreen(
             SettingsSectionTitle("外観")
             PlaceholderItem("テーマ・配色パレット", "Dynamic Color / モダンパレット")
             PlaceholderItem("フォント・行間", "端末の等幅フォントと行間")
+            ListItem(
+                headlineContent = { Text("タブの並びを入れ替え") },
+                supportingContent = {
+                    Text(
+                        if (hostTabFirst) {
+                            "下タブ：ホスト / セッション / 設定"
+                        } else {
+                            "下タブ：セッション / ホスト / 設定"
+                        },
+                    )
+                },
+                trailingContent = {
+                    Switch(checked = hostTabFirst, onCheckedChange = onHostTabFirstChange)
+                },
+            )
 
             SettingsSectionTitle("端末")
             PlaceholderItem("スクロールバック行数", "履歴の保持行数")
