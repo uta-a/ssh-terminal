@@ -149,7 +149,9 @@ class SessionController(
         val s = sessions[id] ?: return
         Log.w(TAG, "session closed (err=${err?.javaClass?.simpleName}: ${err?.message})", err)
         // サーバ主導のクローズ：sshj クライアントを解放。端末面には切断メッセージを残す（host は保持）。
-        s.ssh.close()
+        // close() は disconnect パケット送信＝ソケット I/O を伴うため、メインスレッドで呼ぶと
+        // NetworkOnMainThreadException で途中失敗する。バックグラウンドで確実に解放する。
+        thread(name = "ssh-close") { runCatching { s.ssh.close() } }
         main.removeCallbacks(s.clearBusy)
         s.busy = false
         feedNotice(s, if (err?.message != null) "切断されました: ${err.message}" else "接続が閉じられました")
