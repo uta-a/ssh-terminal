@@ -41,6 +41,8 @@ class EmulatorHost(
     val frame: Int get() = frameState.intValue
 
     init {
+        // ビビッドな既定 ANSI 色を calm な muted パレットへ差し替える。
+        TerminalPalette.applyTo(emulator.mColors.mCurrentColors)
         transport.setOnReceive { data, len -> feed(data, len) }
     }
 

@@ -20,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.DrawerValue
@@ -118,6 +119,7 @@ private fun SessionDrawer(
             Text(
                 text = "セッション",
                 style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(start = 28.dp, top = 20.dp, bottom = 8.dp),
             )
             LazyColumn(modifier = Modifier.weight(1f)) {
@@ -136,6 +138,9 @@ private fun SessionDrawer(
                         badge = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null) },
                         selected = false,
                         onClick = onNewSession,
+                        colors = NavigationDrawerItemDefaults.colors(
+                            unselectedIconColor = MaterialTheme.colorScheme.primary,
+                        ),
                         modifier = Modifier.padding(horizontal = 12.dp),
                     )
                 }
@@ -146,6 +151,9 @@ private fun SessionDrawer(
                 icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
                 selected = false,
                 onClick = onOpenSettings,
+                colors = NavigationDrawerItemDefaults.colors(
+                    unselectedIconColor = MaterialTheme.colorScheme.primary,
+                ),
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             )
         }

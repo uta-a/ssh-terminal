@@ -3,13 +3,11 @@ package com.uta.terminal.terminal
 import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
@@ -42,9 +40,10 @@ fun TerminalCanvas(
     val cellW = remember(textSizePx) { paint.measureText("M").coerceAtLeast(1f) }
     val cellH = remember(textSizePx) { ceil(fm.descent - fm.ascent).coerceAtLeast(1f) }
 
-    val defaultFgArgb = MaterialTheme.colorScheme.onSurfaceVariant.toArgb()
-    val surfaceArgb = MaterialTheme.colorScheme.surfaceContainerHighest.toArgb()
-    val cursorArgb = MaterialTheme.colorScheme.primary.toArgb()
+    // 端末エリアは参照デザインに合わせた calm な固定パレット（UI クロムの Dynamic Color とは分離）。
+    val defaultFgArgb = TerminalPalette.DIM_FOREGROUND
+    val surfaceArgb = TerminalPalette.BACKGROUND
+    val cursorArgb = TerminalPalette.CURSOR
 
     Canvas(
         modifier = modifier.onSizeChanged { size ->
