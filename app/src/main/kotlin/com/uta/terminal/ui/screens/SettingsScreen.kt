@@ -13,6 +13,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -20,12 +21,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 /**
- * 設定画面（スケルトン）。TopAppBar + スクロール Column にセクションを並べる IR Tool 流儀。
+ * 設定画面。TopAppBar + スクロール Column にセクションを並べる IR Tool 流儀。
  * 鍵管理はこの設定内の一項目として置く。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    biometricEnabled: Boolean,
+    onBiometricChange: (Boolean) -> Unit,
+) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -56,7 +61,13 @@ fun SettingsScreen(onBack: () -> Unit) {
             PlaceholderItem("既定ポート / keepalive", "接続の既定パラメータ")
 
             SettingsSectionTitle("セキュリティ")
-            PlaceholderItem("生体認証", "秘密のアンロック方式")
+            ListItem(
+                headlineContent = { Text("生体認証でロック") },
+                supportingContent = { Text("起動・復帰時に指紋認証を要求（デバッグビルドでは無効）") },
+                trailingContent = {
+                    Switch(checked = biometricEnabled, onCheckedChange = onBiometricChange)
+                },
+            )
             PlaceholderItem("既知ホスト（TOFU）", "保存済みフィンガープリントの管理")
             PlaceholderItem("鍵管理", "鍵の生成・インポート・削除")
 

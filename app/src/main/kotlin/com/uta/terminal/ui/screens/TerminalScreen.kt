@@ -3,6 +3,8 @@ package com.uta.terminal.ui.screens
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -64,14 +66,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalTextToolbar
+import androidx.compose.ui.platform.TextToolbar
+import androidx.compose.ui.platform.TextToolbarStatus
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.uta.terminal.core.model.SessionState
@@ -110,6 +121,9 @@ fun TerminalScreen(
     var fullscreen by remember { mutableStateOf(false) }
     // セッション名変更ダイアログ。
     var renameOpen by remember { mutableStateOf(false) }
+    // パスワード入力ダイアログ（sudo 等。インライン平文表示せずに送る）。
+    var passDialogOpen by remember { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
     // 入力中の 1 行（IME 変換中テキストを含む）。Enter で送信し空に戻す。
     var inputTfv by remember { mutableStateOf(TextFieldValue("")) }
     // 端末フォントの表示倍率（ピンチで拡縮、⋮ メニューでリセット）。
@@ -127,8 +141,15 @@ fun TerminalScreen(
 
     // 接続状態インジケータ用。
     val connecting = state is SessionState.Connecting || state is SessionState.Reconnecting
+    // キーボード表示/非表示の直後はリサイズ→リモート再描画で出力が来るため、その分の busy を抑制する。
+    var suppressBusy by remember { mutableStateOf(false) }
+    LaunchedEffect(imeVisible) {
+        suppressBusy = true
+        kotlinx.coroutines.delay(700)
+        suppressBusy = false
+    }
     // 上部ローディング：接続確立中、またはリモートが出力中（コマンド実行中）に走らせる。
-    val running = connecting || busy
+    val running = connecting || (busy && !suppressBusy)
 
     // 出力で履歴が伸びたとき、スクロール位置（表示中の行）を保持する。最新表示中(0)は追従して最新のまま。
     DisposableEffect(host) {
@@ -262,6 +283,42 @@ fun TerminalScreen(
                                         }
                                     }
                                 }
+                            }
+                            // 長押しでクリップボードを入力行へ貼り付ける（Initial パスで検知し、
+                            // 透明入力フィールドの誤配置ツールバーに頼らない）。タップは素通し。
+                            .pointerInput(Unit) {
+                                val slop = viewConfiguration.touchSlop
+                                val timeout = viewConfiguration.longPressTimeoutMillis
+                                while (true) {
+                                    val down = awaitPointerEventScope {
+                                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                    }
+                                    val longPressed = try {
+                                        kotlinx.coroutines.withTimeout(timeout) {
+                                            awaitPointerEventScope {
+                                                var pressed = true
+                                                while (pressed) {
+                                                    val e = awaitPointerEvent(PointerEventPass.Initial)
+                                                    val ch = e.changes.firstOrNull { it.id == down.id }
+                                                    if (ch == null || !ch.pressed) {
+                                                        pressed = false
+                                                    } else if ((ch.position - down.position).getDistance() > slop) {
+                                                        pressed = false
+                                                    }
+                                                }
+                                            }
+                                            false
+                                        }
+                                    } catch (t: kotlinx.coroutines.TimeoutCancellationException) {
+                                        true
+                                    }
+                                    if (longPressed) {
+                                        clipboard.getText()?.let { pasted ->
+                                            val text = inputTfv.text + pasted.text
+                                            inputTfv = TextFieldValue(text, TextRange(text.length))
+                                        }
+                                    }
+                                }
                             },
                     ) {
                         // 既定文字色＝もとの Material You 色（primary）。確定インラインも送信後の端末出力も同色。
@@ -293,7 +350,24 @@ fun TerminalScreen(
                             handleColor = Color.Transparent,
                             backgroundColor = Color.Transparent,
                         )
-                        CompositionLocalProvider(LocalTextSelectionColors provides transparentSelection) {
+                        // 既定の貼り付けツールバー（左上に誤配置）を抑制。貼り付けは長押しで行う。
+                        val noToolbar = remember {
+                            object : TextToolbar {
+                                override val status: TextToolbarStatus = TextToolbarStatus.Hidden
+                                override fun hide() {}
+                                override fun showMenu(
+                                    rect: Rect,
+                                    onCopyRequested: (() -> Unit)?,
+                                    onPasteRequested: (() -> Unit)?,
+                                    onCutRequested: (() -> Unit)?,
+                                    onSelectAllRequested: (() -> Unit)?,
+                                ) {}
+                            }
+                        }
+                        CompositionLocalProvider(
+                            LocalTextSelectionColors provides transparentSelection,
+                            LocalTextToolbar provides noToolbar,
+                        ) {
                             BasicTextField(
                                 value = inputTfv,
                                 onValueChange = { inputTfv = it },
@@ -344,6 +418,7 @@ fun TerminalScreen(
                         stickyAlt = stickyAlt,
                         onToggleCtrl = { stickyCtrl = !stickyCtrl },
                         onToggleAlt = { stickyAlt = !stickyAlt },
+                        onPasswordEntry = { passDialogOpen = true },
                         onKey = { action ->
                             action(host); focusRequester.requestFocus()
                             scrollOffset = 0; scrollAccumPx = 0f
@@ -376,6 +451,34 @@ fun TerminalScreen(
             },
         )
     }
+
+    // パスワード入力ダイアログ：マスクした入力を改行付きで送信（インラインに平文表示しない）。
+    if (passDialogOpen) {
+        var pass by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { passDialogOpen = false },
+            title = { Text("パスワードを送信") },
+            text = {
+                OutlinedTextField(
+                    value = pass,
+                    onValueChange = { pass = it },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    label = { Text("パスワード") },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    host.sendBytes((pass + "\r").toByteArray(Charsets.UTF_8))
+                    passDialogOpen = false
+                }) { Text("送信") }
+            },
+            dismissButton = {
+                TextButton(onClick = { passDialogOpen = false }) { Text("キャンセル") }
+            },
+        )
+    }
 }
 
 /** 接続状態を表すドット色。 */
@@ -387,33 +490,48 @@ private fun statusColor(state: SessionState): Color = when (state) {
     is SessionState.Disconnected -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
-/** キーボード上端相当に置く補助キー行（Ctrl/Alt は sticky トグル）。 */
+/**
+ * キーボード上端相当に置く補助キー行。2 段構成：
+ * - 上段＝Esc/Ctrl/Alt/Tab/^C/pass（横スクロール）。Ctrl/Alt は sticky トグル。
+ * - 下段＝矢印キー（幅いっぱいに均等配置で見切れず押しやすい）。
+ */
 @Composable
 private fun ExtraKeysRow(
     stickyCtrl: Boolean,
     stickyAlt: Boolean,
     onToggleCtrl: () -> Unit,
     onToggleAlt: () -> Unit,
+    onPasswordEntry: () -> Unit,
     onKey: ((EmulatorHost) -> Unit) -> Unit,
 ) {
     val scroll = rememberScrollState()
     Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
-        androidx.compose.foundation.layout.Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(scroll)
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            KeyChip("Esc") { onKey { it.sendBytes(byteArrayOf(0x1b)) } }
-            KeyChip("Ctrl", active = stickyCtrl) { onToggleCtrl() }
-            KeyChip("Alt", active = stickyAlt) { onToggleAlt() }
-            KeyChip("Tab") { onKey { it.sendBytes(byteArrayOf(0x09)) } }
-            KeyChip("^C") { onKey { it.sendBytes(byteArrayOf(0x03)) } }
-            KeyChip("←") { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_LEFT, false, false, false) } }
-            KeyChip("↓") { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_DOWN, false, false, false) } }
-            KeyChip("↑") { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_UP, false, false, false) } }
-            KeyChip("→") { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_RIGHT, false, false, false) } }
+            // 上段：機能キー。
+            androidx.compose.foundation.layout.Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(scroll),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                KeyChip("Esc") { onKey { it.sendBytes(byteArrayOf(0x1b)) } }
+                KeyChip("Ctrl", active = stickyCtrl) { onToggleCtrl() }
+                KeyChip("Alt", active = stickyAlt) { onToggleAlt() }
+                KeyChip("Tab") { onKey { it.sendBytes(byteArrayOf(0x09)) } }
+                KeyChip("^C") { onKey { it.sendBytes(byteArrayOf(0x03)) } }
+                KeyChip("pass") { onPasswordEntry() }
+            }
+            // 下段：矢印。幅いっぱいに均等（見切れない）。
+            androidx.compose.foundation.layout.Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                ArrowKey("←", Modifier.weight(1f)) { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_LEFT, false, false, false) } }
+                ArrowKey("↓", Modifier.weight(1f)) { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_DOWN, false, false, false) } }
+                ArrowKey("↑", Modifier.weight(1f)) { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_UP, false, false, false) } }
+                ArrowKey("→", Modifier.weight(1f)) { onKey { it.sendKeyCode(AndroidKeyEvent.KEYCODE_DPAD_RIGHT, false, false, false) } }
+            }
         }
     }
 }
@@ -431,6 +549,17 @@ private fun KeyChip(label: String, active: Boolean = false, onClick: () -> Unit)
             androidx.compose.material3.ButtonDefaults.filledTonalButtonColors()
         },
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+    ) {
+        Text(label, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+    }
+}
+
+@Composable
+private fun ArrowKey(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    FilledTonalButton(
+        onClick = onClick,
+        modifier = modifier,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp),
     ) {
         Text(label, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
     }

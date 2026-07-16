@@ -4,8 +4,8 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import com.uta.terminal.service.SshForegroundService
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.uta.terminal.core.model.SessionId
@@ -16,6 +16,7 @@ import com.uta.terminal.core.ssh.HostKeyStore
 import com.uta.terminal.core.ssh.SshConnectionRequest
 import com.uta.terminal.core.ssh.SshShellSession
 import com.uta.terminal.core.ssh.TofuHostKeyVerifier
+import com.uta.terminal.service.SshForegroundService
 import com.uta.terminal.ssh.SshSecurity
 import com.uta.terminal.terminal.EmulatorHost
 import com.uta.terminal.terminal.SshTransport
@@ -23,10 +24,10 @@ import java.util.UUID
 import kotlin.concurrent.thread
 
 /**
- * アクティブな SSH セッションのライフサイクルを保持する（MVP は 1 セッション）。
+ * 複数の SSH セッションを保持する。各セッションが自分の [EmulatorHost] を持ち、[activeId] が
+ * 現在 UI に表示するセッションを決める。同一ホストにも複数接続できる（新規接続で既存は閉じない）。
  *
- * [EmulatorHost] をここで生成・保持することで、画面遷移（NavHost）で TerminalScreen が
- * 破棄・再生成されてもスクロールバックと接続が維持される。UI は [host]/[state] を購読する。
+ * [host]/[state]/[label]/[busy] はアクティブセッションの状態を返す（Compose が購読）。
  */
 class SessionController(
     private val appContext: Context,
@@ -35,139 +36,154 @@ class SessionController(
 ) {
     private val main = Handler(Looper.getMainLooper())
 
-    /** 現在のエミュレータ（未接続なら null）。Compose が購読して描画する。 */
-    var host by mutableStateOf<EmulatorHost?>(null)
-        private set
-
-    var state by mutableStateOf<SessionState>(SessionState.Disconnected)
-        private set
-
-    /** TopAppBar 用の現在セッション名（user@host）。 */
-    var label by mutableStateOf<String?>(null)
-        private set
-
-    /** リモートが出力中か（上部ローディングライン用）。出力が途切れて一定時間で false に戻す。 */
-    var busy by mutableStateOf(false)
-        private set
-
-    private var session: SshShellSession? = null
-    private var transport: SshTransport? = null
-    private var currentId: SessionId? = null
-
-    private val clearBusy = Runnable { busy = false }
-
-    private fun onOutputActivity() {
-        busy = true
-        main.removeCallbacks(clearBusy)
-        main.postDelayed(clearBusy, BUSY_IDLE_MS)
+    private class Session(
+        val id: SessionId,
+        val host: EmulatorHost,
+        val ssh: SshShellSession,
+        val transport: SshTransport,
+    ) {
+        var label by mutableStateOf("")
+        var state by mutableStateOf<SessionState>(SessionState.Connecting)
+        var busy by mutableStateOf(false)
+        val clearBusy = Runnable { busy = false }
     }
 
-    /** 現在セッションの表示名を変更する。 */
-    fun rename(newLabel: String) {
-        val name = newLabel.trim()
-        if (name.isEmpty()) return
-        label = name
-        val id = currentId ?: return
-        sessionManager.upsert(SessionInfo(id, name, state))
-        SshForegroundService.start(appContext, name) // 通知の表示名も更新
-    }
+    private val sessions = mutableStateMapOf<SessionId, Session>()
 
-    /** 接続を開始する。ネットワーク処理は別スレッドで行い、状態更新はメインへ戻す。 */
+    var activeId by mutableStateOf<SessionId?>(null)
+        private set
+
+    private val active: Session? get() = activeId?.let { sessions[it] }
+
+    val host: EmulatorHost? get() = active?.host
+    val state: SessionState get() = active?.state ?: SessionState.Disconnected
+    val label: String? get() = active?.label
+    val busy: Boolean get() = active?.busy ?: false
+
+    /** 新しいセッションを開始する（既存セッションは閉じない）。 */
     fun connect(req: SshConnectionRequest, label: String) {
         SshSecurity.ensureBouncyCastle()
-        closeCurrent()
-
         val id = SessionId(UUID.randomUUID().toString())
-        currentId = id
-        this.label = label
-
         val ssh = SshShellSession(TofuHostKeyVerifier(hostKeyStore))
-        session = ssh
         val transport = SshTransport(ssh)
-        transport.onActivity = { onOutputActivity() }
-        this.transport = transport
         val emu = EmulatorHost(req.cols.coerceAtLeast(2), req.rows.coerceAtLeast(2), transport)
-        host = emu
-
+        val session = Session(id, emu, ssh, transport).apply {
+            this.label = label
+            this.state = SessionState.Connecting
+        }
+        transport.onActivity = { onOutputActivity(id) }
         ssh.setOnOutput { data, len -> transport.deliver(data, len) }
         ssh.setOnClosed { err -> main.post { onClosed(id, err) } }
 
-        publish(id, SessionState.Connecting, label)
-        // 生存中は常駐通知（バックグラウンドでも接続中と分かる）。
-        SshForegroundService.start(appContext, label)
+        sessions[id] = session
+        activeId = id
+        sessionManager.upsert(SessionInfo(id, label, SessionState.Connecting))
+        // 常駐通知の開始はフォアグラウンド（ユーザー操作）である connect() でのみ行う。
+        SshForegroundService.start(appContext, notificationText())
+
         thread(name = "ssh-connect") {
             try {
                 ssh.connect(req)
                 main.post {
-                    if (currentId == id) {
-                        publish(id, SessionState.Connected, label)
-                        // 接続前に canvas が計測した実サイズを PTY へ再同期する
-                        // （connect 完了前の resize は shell 未生成で握り潰されるため）。
-                        // transport 経由でオフロードし、メインスレッドでソケット I/O しない。
-                        host?.let { transport.resize(it.cols, it.rows) }
-                    }
+                    val s = sessions[id] ?: return@post
+                    s.state = SessionState.Connected
+                    sessionManager.upsert(SessionInfo(id, s.label, SessionState.Connected))
+                    // 接続前に canvas が計測した実サイズを PTY へ再同期。
+                    transport.resize(emu.cols, emu.rows)
+                    refreshNotification()
                 }
             } catch (e: Throwable) {
-                main.post { if (currentId == id) onFailed(id, e) }
+                main.post { onFailed(id, e) }
             }
         }
     }
 
-    /** ユーザー操作による切断。 */
+    /** 表示するセッションを切り替える。 */
+    fun setActive(id: SessionId) {
+        if (sessions.containsKey(id)) {
+            activeId = id
+            refreshNotification()
+        }
+    }
+
+    /** アクティブセッションを切断・破棄する。他に生きたセッションがあればそれをアクティブにする。 */
     fun disconnect() {
-        closeCurrent()
-        host = null
-        state = SessionState.Disconnected
-        label = null
+        val id = activeId ?: return
+        removeSession(id)
+    }
+
+    fun disconnect(id: SessionId) {
+        removeSession(id)
+    }
+
+    private fun removeSession(id: SessionId) {
+        val s = sessions.remove(id) ?: return
+        main.removeCallbacks(s.clearBusy)
+        s.transport.onActivity = null
+        s.transport.close()
+        sessionManager.remove(id)
+        if (activeId == id) activeId = sessions.keys.firstOrNull()
+        refreshNotification()
+    }
+
+    /** アクティブセッションの表示名を変更する。 */
+    fun rename(newLabel: String) {
+        val name = newLabel.trim()
+        if (name.isEmpty()) return
+        val s = active ?: return
+        s.label = name
+        sessionManager.upsert(SessionInfo(s.id, name, s.state))
+        refreshNotification()
+    }
+
+    private fun onOutputActivity(id: SessionId) {
+        val s = sessions[id] ?: return
+        s.busy = true
+        main.removeCallbacks(s.clearBusy)
+        main.postDelayed(s.clearBusy, BUSY_IDLE_MS)
     }
 
     private fun onClosed(id: SessionId, err: Throwable?) {
-        if (currentId != id) return
+        val s = sessions[id] ?: return
         Log.w(TAG, "session closed (err=${err?.javaClass?.simpleName}: ${err?.message})", err)
-        // サーバ主導のクローズ（シェル終了/回線断）：sshj クライアントを解放して keepAlive 等を止める。
-        // 端末面には切断メッセージを残したいので host は保持する。
-        session?.close()
-        SshForegroundService.stop(appContext)
-        main.removeCallbacks(clearBusy)
-        busy = false
-        feedNotice(if (err?.message != null) "切断されました: ${err.message}" else "接続が閉じられました")
-        state = SessionState.Disconnected
-        sessionManager.upsert(SessionInfo(id, label ?: "", SessionState.Disconnected))
+        // サーバ主導のクローズ：sshj クライアントを解放。端末面には切断メッセージを残す（host は保持）。
+        s.ssh.close()
+        main.removeCallbacks(s.clearBusy)
+        s.busy = false
+        feedNotice(s, if (err?.message != null) "切断されました: ${err.message}" else "接続が閉じられました")
+        s.state = SessionState.Disconnected
+        sessionManager.upsert(SessionInfo(id, s.label, SessionState.Disconnected))
+        refreshNotification()
     }
 
     private fun onFailed(id: SessionId, e: Throwable) {
-        if (currentId != id) return
+        val s = sessions[id] ?: return
         Log.w(TAG, "connect failed", e)
-        feedNotice("接続に失敗しました: ${e.message ?: e.javaClass.simpleName}")
-        state = SessionState.Failed(e.message ?: "接続失敗")
-        sessionManager.upsert(SessionInfo(id, label ?: "", state))
+        feedNotice(s, "接続に失敗しました: ${e.message ?: e.javaClass.simpleName}")
+        s.state = SessionState.Failed(e.message ?: "接続失敗")
+        sessionManager.upsert(SessionInfo(id, s.label, s.state))
+        refreshNotification()
     }
 
-    private fun publish(id: SessionId, s: SessionState, label: String) {
-        state = s
-        sessionManager.upsert(SessionInfo(id, label, s))
-    }
-
-    /** 接続失敗・切断メッセージを端末面へ赤字で表示する。 */
-    private fun feedNotice(text: String) {
-        val emu = host ?: return
+    private fun feedNotice(s: Session, text: String) {
         val msg = "\r\n[31m[$text][0m\r\n"
         val bytes = msg.toByteArray(Charsets.UTF_8)
-        emu.feed(bytes, bytes.size)
+        s.host.feed(bytes, bytes.size)
     }
 
-    /** 現在セッションを閉じ、レジストリからも除去する（再接続時のゴースト残留を防ぐ）。 */
-    private fun closeCurrent() {
-        SshForegroundService.stop(appContext)
-        // close は ssh.disconnect（ソケット I/O）を伴うため transport の executor へオフロードする。
-        transport?.onActivity = null
-        transport?.close()
-        transport = null
-        session = null
-        main.removeCallbacks(clearBusy)
-        busy = false
-        currentId?.let { sessionManager.remove(it) }
-        currentId = null
+    private fun notificationText(): String {
+        val activeLabel = active?.label ?: "セッション"
+        val count = sessions.size
+        return if (count > 1) "$activeLabel  (+${count - 1})" else activeLabel
+    }
+
+    /** 表示中の常駐通知を更新／停止する（バックグラウンドからも安全）。開始は connect() で行う。 */
+    private fun refreshNotification() {
+        val anyAlive = sessions.values.any {
+            it.state is SessionState.Connecting || it.state is SessionState.Connected
+        }
+        if (anyAlive) SshForegroundService.update(appContext, notificationText())
+        else SshForegroundService.stop(appContext)
     }
 
     private companion object {

@@ -51,6 +51,13 @@ class SshForegroundService : Service() {
             }
         }
 
+        /** 表示中の通知だけ更新する（バックグラウンドからも安全。startForegroundService は使わない）。 */
+        fun update(context: Context, label: String) {
+            ensureChannel(context)
+            val manager = context.getSystemService(NotificationManager::class.java)
+            manager.notify(NOTIF_ID, buildNotification(context, label))
+        }
+
         fun stop(context: Context) {
             context.stopService(Intent(context, SshForegroundService::class.java))
         }

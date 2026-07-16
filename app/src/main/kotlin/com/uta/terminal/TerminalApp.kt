@@ -7,6 +7,7 @@ import com.uta.terminal.core.session.SessionManager
 import com.uta.terminal.core.ssh.HostKeyStore
 import com.uta.terminal.core.ssh.InMemoryHostKeyStore
 import com.uta.terminal.data.ProfileRepository
+import com.uta.terminal.data.SettingsStore
 import com.uta.terminal.data.TerminalDatabase
 import com.uta.terminal.session.SessionController
 
@@ -27,6 +28,9 @@ class AppContainer(app: Application) {
     // 接続プロファイルの永続化（Room）。秘密は Keystore で暗号化して保存する。
     private val database = Room.databaseBuilder(appContext, TerminalDatabase::class.java, "terminal.db").build()
     val profileRepository = ProfileRepository(database.profileDao())
+
+    // アプリ設定（生体認証 ON/OFF 等）。
+    val settingsStore = SettingsStore(appContext)
 
     // TODO: settings（DataStore）・HostKeyEntry の永続 TOFU をセッション実装フェーズで追加する。
 }

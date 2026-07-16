@@ -31,16 +31,18 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.uta.terminal.BuildConfig
 
 /**
  * 生体認証（指紋等）でアプリ全体をロックするゲート。
  *
- * - 起動時、およびバックグラウンドから復帰時に認証を要求する（画面回転では再ロックしない）。
- * - 生体認証が使えない端末（未登録/非対応）ではロックせず素通しする（締め出し回避）。
- * - 認証成功まで [content]（アプリ本体）は描画しない。
+ * - [enabled]（設定）が true かつ端末が生体認証可能なときのみロックする。
+ * - **デバッグビルドではロックしない**（開発中の検証のため）。
+ * - 起動時・バックグラウンド復帰時に認証を要求する（画面回転では再ロックしない）。
+ * - **ロック画面は [content] の上に重ねて表示**する（content を再マウントしないため、解除後は元の画面へ戻る）。
  */
 @Composable
-fun BiometricGate(content: @Composable () -> Unit) {
+fun BiometricGate(enabled: Boolean, content: @Composable () -> Unit) {
     val context = LocalContext.current
     val activity = context as? FragmentActivity
     val canAuth = remember {
@@ -49,8 +51,10 @@ fun BiometricGate(content: @Composable () -> Unit) {
                 .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK) ==
             BiometricManager.BIOMETRIC_SUCCESS
     }
-    // 生体認証が使えないなら最初から解除済み扱い。
-    var authed by rememberSaveable { mutableStateOf(!canAuth) }
+    val gate = enabled && canAuth && !BuildConfig.DEBUG
+
+    // gate 無効なら常に解除済み。
+    var authed by rememberSaveable(gate) { mutableStateOf(!gate) }
     var prompting by remember { mutableStateOf(false) }
 
     fun prompt() {
@@ -66,10 +70,10 @@ fun BiometricGate(content: @Composable () -> Unit) {
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    prompting = false // ロック画面のボタンから再試行できる
+                    prompting = false
                 }
 
-                override fun onAuthenticationFailed() { /* 一致せず。プロンプトは継続 */ }
+                override fun onAuthenticationFailed() { /* 継続 */ }
             },
         )
         val info = BiometricPrompt.PromptInfo.Builder()
@@ -81,15 +85,13 @@ fun BiometricGate(content: @Composable () -> Unit) {
         prompt.authenticate(info)
     }
 
-    // 起動時（observer 追加時に現在状態まで昇格して ON_START が届く）と復帰時に認証。
-    // 画面回転（isChangingConfigurations）では再ロックしない。
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, canAuth) {
+    DisposableEffect(lifecycleOwner, gate) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START -> if (canAuth && !authed) prompt()
+                Lifecycle.Event.ON_START -> if (gate && !authed) prompt()
                 Lifecycle.Event.ON_STOP ->
-                    if (canAuth && activity?.isChangingConfigurations == false) authed = false
+                    if (gate && activity?.isChangingConfigurations == false) authed = false
                 else -> {}
             }
         }
@@ -97,9 +99,10 @@ fun BiometricGate(content: @Composable () -> Unit) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    if (authed) {
-        content()
-    } else {
+    // content は常に compose する（再マウントで端末やナビが失われないように）。
+    content()
+    // ロック中は不透明なロック画面を上に重ねる。
+    if (!authed) {
         LockScreen(onUnlock = { prompt() })
     }
 }

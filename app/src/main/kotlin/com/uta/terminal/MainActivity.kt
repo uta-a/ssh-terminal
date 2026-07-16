@@ -50,6 +50,7 @@ import com.uta.terminal.core.session.SessionInfo
 import com.uta.terminal.core.session.SessionManager
 import com.uta.terminal.core.ssh.SshConnectionRequest
 import com.uta.terminal.data.ProfileRepository
+import com.uta.terminal.data.SettingsStore
 import com.uta.terminal.session.SessionController
 import com.uta.terminal.ui.BiometricGate
 import com.uta.terminal.ui.screens.AddressBookScreen
@@ -77,9 +78,16 @@ class MainActivity : FragmentActivity() {
         val container = (application as TerminalApp).container
         setContent {
             TerminalTheme {
-                // 起動時に指紋認証でロック解除するまでアプリ本体を出さない。
-                BiometricGate {
-                    AppRoot(container.sessionManager, container.sessionController, container.profileRepository)
+                val biometricEnabled by container.settingsStore.biometricEnabled
+                    .collectAsState(initial = true)
+                // 設定で有効かつ端末対応時、起動/復帰でロック（デバッグビルドは無効）。
+                BiometricGate(enabled = biometricEnabled) {
+                    AppRoot(
+                        container.sessionManager,
+                        container.sessionController,
+                        container.profileRepository,
+                        container.settingsStore,
+                    )
                 }
             }
         }
@@ -98,6 +106,7 @@ private fun AppRoot(
     sessionManager: SessionManager,
     sessionController: SessionController,
     profileRepository: ProfileRepository,
+    settingsStore: SettingsStore,
 ) {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -111,9 +120,9 @@ private fun AppRoot(
             SessionDrawer(
                 sessions = sessions,
                 onSelectSession = { id ->
-                    sessionManager.setActive(id)
+                    // 表示するセッションを切り替えて端末画面へ。
+                    sessionController.setActive(id)
                     scope.launch { drawerState.close() }
-                    // セッションを選んだら端末画面へ戻す（選択が無反応にならないように）。
                     navController.navigate(Routes.TERMINAL) { launchSingleTop = true }
                 },
                 onNewSession = {
@@ -198,7 +207,14 @@ private fun AppRoot(
                 )
             }
             composable(Routes.SETTINGS) {
-                SettingsScreen(onBack = { navController.popBackStack() })
+                val biometricEnabled by settingsStore.biometricEnabled.collectAsState(initial = true)
+                SettingsScreen(
+                    onBack = { navController.popBackStack() },
+                    biometricEnabled = biometricEnabled,
+                    onBiometricChange = { enabled ->
+                        scope.launch { settingsStore.setBiometricEnabled(enabled) }
+                    },
+                )
             }
         }
     }
