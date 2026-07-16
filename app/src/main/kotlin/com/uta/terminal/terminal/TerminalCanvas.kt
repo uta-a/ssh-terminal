@@ -82,7 +82,9 @@ fun TerminalCanvas(
     // キーボード表示でカードが縮むと行数も減り、シェル下端（プロンプト）がキーボード上端に収まる。
     var pendingSize by remember { mutableStateOf(IntSize.Zero) }
     // cellW/cellH をキーに含め、ピンチでフォントサイズ（=セル寸法）が変わったら桁数/行数を再計算する。
-    LaunchedEffect(pendingSize, cellW, cellH) {
+    // host もキーに含める：同一 Canvas を使い回してセッションを切り替えた／2 個目以降を開いたとき、
+    // pendingSize が不変でも新しい host に対して resize が走らずビューポート桁数に合わない不具合を防ぐ。
+    LaunchedEffect(pendingSize, cellW, cellH, host) {
         val s = pendingSize
         if (s.width <= 0 || s.height <= 0) return@LaunchedEffect
         delay(60)

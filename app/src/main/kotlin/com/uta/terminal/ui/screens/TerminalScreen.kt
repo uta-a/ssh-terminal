@@ -114,8 +114,9 @@ fun TerminalScreen(
         return
     }
 
-    var stickyCtrl by remember { mutableStateOf(false) }
-    var stickyAlt by remember { mutableStateOf(false) }
+    // Ctrl/Alt sticky はセッション固有。切替で別ホストへ引き継がない（host をキーにする）。
+    var stickyCtrl by remember(host) { mutableStateOf(false) }
+    var stickyAlt by remember(host) { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     // フルスクリーン（上部タイトルバー非表示）。戻るキーで解除。
     var fullscreen by remember { mutableStateOf(false) }
@@ -125,13 +126,14 @@ fun TerminalScreen(
     var passDialogOpen by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
     // 入力中の 1 行（IME 変換中テキストを含む）。Enter で送信し空に戻す。
-    var inputTfv by remember { mutableStateOf(TextFieldValue("")) }
-    // 端末フォントの表示倍率（ピンチで拡縮、⋮ メニューでリセット）。
+    // host をキーにし、セッション切替で未送信の入力行を別ホストへ持ち越さない（誤送信防止）。
+    var inputTfv by remember(host) { mutableStateOf(TextFieldValue("")) }
+    // 端末フォントの表示倍率（ピンチで拡縮、⋮ メニューでリセット）。表示設定なので全セッション共通。
     var fontScale by remember { mutableFloatStateOf(1f) }
-    // 履歴スクロール量（行）。0＝最新（ライブ画面）。上方向ドラッグで増える。
-    var scrollOffset by remember { mutableIntStateOf(0) }
-    // ドラッグ px の端数を持ち越して行換算する。
-    var scrollAccumPx by remember { mutableFloatStateOf(0f) }
+    // 履歴スクロール量（行）。0＝最新（ライブ画面）。上方向ドラッグで増える。セッション固有。
+    var scrollOffset by remember(host) { mutableIntStateOf(0) }
+    // ドラッグ px の端数を持ち越して行換算する。セッション固有。
+    var scrollAccumPx by remember(host) { mutableFloatStateOf(0f) }
     // TerminalCanvas が報告するセル高（px→行の換算に使う）。
     var cellHeightPx by remember { mutableFloatStateOf(1f) }
     val focusRequester = remember { FocusRequester() }
