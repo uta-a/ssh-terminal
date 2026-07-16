@@ -4,6 +4,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import com.termux.terminal.KeyHandler
 import com.termux.terminal.TerminalEmulator
 import com.termux.terminal.TerminalOutput
+import com.termux.terminal.TerminalSession
+import com.termux.terminal.TerminalSessionClient
 
 /**
  * Termux [TerminalEmulator] を PTY ではなく [Transport]（PoC ではローカルエコー、
@@ -32,8 +34,30 @@ class EmulatorHost(
         override fun onColorsChanged() {}
     }
 
+    // TerminalEmulator に渡すクライアント。null だと未対応エスケープ処理（doCsiBiggerThan 等）が
+    // mClient.logError を呼んで NPE で落ちるため、no-op 実装を必ず渡す。
+    // on*(TerminalSession) 系は TerminalSession 経由専用で本アプリでは呼ばれない。
+    private val client = object : TerminalSessionClient {
+        override fun onTextChanged(changedSession: TerminalSession) {}
+        override fun onTitleChanged(changedSession: TerminalSession) {}
+        override fun onSessionFinished(finishedSession: TerminalSession) {}
+        override fun onCopyTextToClipboard(session: TerminalSession, text: String?) {}
+        override fun onPasteTextFromClipboard(session: TerminalSession?) {}
+        override fun onBell(session: TerminalSession) {}
+        override fun onColorsChanged(session: TerminalSession) {}
+        override fun onTerminalCursorStateChange(state: Boolean) {}
+        override fun getTerminalCursorStyle(): Int? = null
+        override fun logError(tag: String?, message: String?) {}
+        override fun logWarn(tag: String?, message: String?) {}
+        override fun logInfo(tag: String?, message: String?) {}
+        override fun logDebug(tag: String?, message: String?) {}
+        override fun logVerbose(tag: String?, message: String?) {}
+        override fun logStackTraceWithMessage(tag: String?, message: String?, e: Exception?) {}
+        override fun logStackTrace(tag: String?, e: Exception?) {}
+    }
+
     val emulator: TerminalEmulator =
-        TerminalEmulator(output, columns, rows, TRANSCRIPT_ROWS, null)
+        TerminalEmulator(output, columns, rows, TRANSCRIPT_ROWS, client)
 
     private val frameState = mutableIntStateOf(0)
 
