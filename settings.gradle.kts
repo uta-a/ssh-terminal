@@ -27,6 +27,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "terminal"
+rootProject.name = "tunnel"
 include(":app")
 include(":core")

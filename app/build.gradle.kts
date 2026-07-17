@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.uta.terminal"
+    namespace = "com.uta.tunnel"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.uta.terminal"
+        applicationId = "com.uta.tunnel"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
