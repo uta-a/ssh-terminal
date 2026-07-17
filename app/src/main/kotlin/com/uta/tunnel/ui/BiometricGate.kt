@@ -45,12 +45,14 @@ import com.uta.tunnel.BuildConfig
  * 生体認証（指紋等）でアプリ全体をロックするゲート。
  *
  * - [enabled]（設定）が true かつ端末が生体認証可能なときのみロックする。
+ *   **[enabled] が null の間は設定未読み込み**とみなし、判定を保留して認証プロンプトを出さない
+ *   （initial=true で購読すると起動直後の1フレームがオフ設定でも true になり、プロンプトが誤発火するため）。
  * - **デバッグビルドではロックしない**（開発中の検証のため）。
  * - 起動時・バックグラウンド復帰時に認証を要求する（画面回転では再ロックしない）。
  * - **ロック画面は [content] の上に重ねて表示**する（content を再マウントしないため、解除後は元の画面へ戻る）。
  */
 @Composable
-fun BiometricGate(enabled: Boolean, content: @Composable () -> Unit) {
+fun BiometricGate(enabled: Boolean?, content: @Composable () -> Unit) {
     val context = LocalContext.current
     val activity = context as? FragmentActivity
     val canAuth = remember {
@@ -59,14 +61,29 @@ fun BiometricGate(enabled: Boolean, content: @Composable () -> Unit) {
                 .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK) ==
             BiometricManager.BIOMETRIC_SUCCESS
     }
-    val gate = enabled && canAuth && !BuildConfig.DEBUG
+    // 端末対応かつ本番ビルドか（設定 [enabled] と違い、初回フレームから確定している同期値）。
+    val gateCapable = canAuth && !BuildConfig.DEBUG
+    // 設定未読み込み（null）の間は判定を保留する。
+    val loading = enabled == null
+    val gate = enabled == true && gateCapable
 
-    // gate 無効なら常に解除済み。
-    var authed by rememberSaveable(gate) { mutableStateOf(!gate) }
+    // 初期状態はロック寄り（gateCapable なら未認証）にし、保護対象の content を一瞬でも露出させない。
+    // キーは同期値の gateCapable のみ。設定確定（loading→false）の同期は下の LaunchedEffect が担う
+    // （gate をキーにすると回転時に enabled が null を経由し、認証済みが不必要にリセットされる）。
+    var authed by rememberSaveable(gateCapable) { mutableStateOf(!gateCapable) }
     var prompting by remember { mutableStateOf(false) }
 
+    // 設定が確定したら同期する。ゲート対象外（オフ/非対応/デバッグ）は解除、対象なら未認証のままロック維持。
+    LaunchedEffect(loading, gate) {
+        if (loading) return@LaunchedEffect
+        if (!gate) {
+            prompting = false
+            authed = true
+        }
+    }
+
     fun prompt() {
-        if (authed || activity == null || prompting) return
+        if (!gate || authed || activity == null || prompting) return
         prompting = true
         val prompt = BiometricPrompt(
             activity,

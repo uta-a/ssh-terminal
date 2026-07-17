@@ -128,7 +128,10 @@ fun SettingsScreen(
                 headlineContent = { Text("生体認証でロック") },
                 supportingContent = { Text("起動・復帰時に指紋認証を要求（デバッグビルドでは無効）") },
                 trailingContent = {
-                    Switch(checked = settings.biometricEnabled, onCheckedChange = onBiometricChange)
+                    Switch(
+                        checked = settings.biometricEnabled == true,
+                        onCheckedChange = onBiometricChange,
+                    )
                 },
             )
             ListItem(

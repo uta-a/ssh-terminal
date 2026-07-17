@@ -11,7 +11,8 @@ import androidx.compose.runtime.getValue
  */
 @Immutable
 data class SettingsUiState(
-    val biometricEnabled: Boolean,
+    // null は DataStore 未読み込み（初回フレーム）。ロック判定はこの間 true と誤認しないよう保留する。
+    val biometricEnabled: Boolean?,
     val sessionsTabFirst: Boolean,
     val paletteId: String,
     val fontSizeSp: Float,
@@ -21,7 +22,9 @@ data class SettingsUiState(
 /** [SettingsStore] の各 Flow をまとめて購読する。 */
 @Composable
 fun rememberSettingsUiState(store: SettingsStore): SettingsUiState {
-    val biometricEnabled by store.biometricEnabled.collectAsState(initial = true)
+    // 生体認証は「未読み込み」と「オフ」を区別する必要があるため initial=null で購読する
+    // （initial=true にすると起動直後の1フレームがオフ設定でも true になり、プロンプトが誤発火する）。
+    val biometricEnabled by store.biometricEnabled.collectAsState(initial = null)
     val sessionsTabFirst by store.sessionsTabFirst.collectAsState(initial = false)
     val paletteId by store.terminalPaletteId
         .collectAsState(initial = SettingsStore.DEFAULT_PALETTE_ID)
