@@ -3,18 +3,45 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- テーマアイコン（Material You）用のモノクロ版 >_。色はシステムがテーマ色で塗る。 -->
+    <!--
+      テーマアイコン（Material You）用のモノクロ版。色はシステムがテーマ色で塗る。
+      ジオメトリは ic_launcher_foreground.xml と一致させること。
+    -->
+    <!-- 窓枠 -->
     <path
         android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="9"
+        android:strokeWidth="5"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M35,34 L73,34 A7,7 0 0 1 80,41 L80,67 A7,7 0 0 1 73,74 L35,74 A7,7 0 0 1 28,67 L28,41 A7,7 0 0 1 35,34 Z" />
+    <!-- タイトルバーの区切り線 -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="5"
+        android:fillColor="#00000000"
+        android:pathData="M28,46 L80,46" />
+    <!-- タイトルバーのドット -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M36,37.5 A2.5,2.5 0 1 1 36,42.5 A2.5,2.5 0 1 1 36,37.5 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M45,37.5 A2.5,2.5 0 1 1 45,42.5 A2.5,2.5 0 1 1 45,37.5 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,37.5 A2.5,2.5 0 1 1 54,42.5 A2.5,2.5 0 1 1 54,37.5 Z" />
+    <!-- プロンプト（シェブロン＋アンダースコア） -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="5"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
         android:fillColor="#00000000"
-        android:pathData="M35,38 L53,54 L35,70" />
+        android:pathData="M38,53 L46,60 L38,67" />
     <path
         android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="9"
+        android:strokeWidth="5"
         android:strokeLineCap="round"
         android:fillColor="#00000000"
-        android:pathData="M58,71 L76,71" />
+        android:pathData="M51,67 L68,67" />
 </vector>
