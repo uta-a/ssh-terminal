@@ -9,3 +9,9 @@ build/
 .externalNativeBuild
 .cxx
 local.properties
+
+# リリース署名。鍵とパスワードは絶対にコミットしない（公開リポジトリ）。
+# 鍵を失うと同じ署名で更新版を配れなくなるため、別途バックアップすること。
+*.jks
+*.keystore
+keystore.properties
