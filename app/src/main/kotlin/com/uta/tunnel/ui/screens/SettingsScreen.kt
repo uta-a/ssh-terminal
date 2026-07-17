@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.uta.tunnel.BuildConfig
 import com.uta.tunnel.data.SettingsStore
+import com.uta.tunnel.data.SettingsUiState
 import com.uta.tunnel.terminal.TerminalPalettes
 import kotlin.math.roundToInt
 
@@ -47,14 +48,10 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    biometricEnabled: Boolean,
+    settings: SettingsUiState,
     onBiometricChange: (Boolean) -> Unit,
-    sessionsTabFirst: Boolean,
     onSessionsTabFirstChange: (Boolean) -> Unit,
-    paletteId: String,
     onPaletteChange: (String) -> Unit,
-    fontSizeSp: Float,
-    lineSpacing: Float,
     onFontChange: (sizeSp: Float, lineSpacing: Float) -> Unit,
     onOpenKeys: () -> Unit,
     onOpenKnownHosts: () -> Unit,
@@ -87,13 +84,16 @@ fun SettingsScreen(
             SettingsSectionTitle("外観")
             ListItem(
                 headlineContent = { Text("テーマ・配色パレット") },
-                supportingContent = { Text(paletteLabel(paletteId)) },
+                supportingContent = { Text(paletteLabel(settings.paletteId)) },
                 modifier = Modifier.clickable { paletteDialog = true },
             )
             ListItem(
                 headlineContent = { Text("フォント・行間") },
                 supportingContent = {
-                    Text("端末の等幅フォント ${fontSizeSp.roundToInt()} sp / 行間 ${"%.2f".format(lineSpacing)}")
+                    Text(
+                        "端末の等幅フォント ${settings.fontSizeSp.roundToInt()} sp / " +
+                            "行間 ${"%.2f".format(settings.lineSpacing)}",
+                    )
                 },
                 modifier = Modifier.clickable { fontDialog = true },
             )
@@ -101,7 +101,7 @@ fun SettingsScreen(
                 headlineContent = { Text("タブの並びを入れ替え") },
                 supportingContent = {
                     Text(
-                        if (sessionsTabFirst) {
+                        if (settings.sessionsTabFirst) {
                             "下タブ：セッション / ホスト / 設定"
                         } else {
                             "下タブ：ホスト / セッション / 設定"
@@ -109,7 +109,10 @@ fun SettingsScreen(
                     )
                 },
                 trailingContent = {
-                    Switch(checked = sessionsTabFirst, onCheckedChange = onSessionsTabFirstChange)
+                    Switch(
+                        checked = settings.sessionsTabFirst,
+                        onCheckedChange = onSessionsTabFirstChange,
+                    )
                 },
             )
 
@@ -125,7 +128,7 @@ fun SettingsScreen(
                 headlineContent = { Text("生体認証でロック") },
                 supportingContent = { Text("起動・復帰時に指紋認証を要求（デバッグビルドでは無効）") },
                 trailingContent = {
-                    Switch(checked = biometricEnabled, onCheckedChange = onBiometricChange)
+                    Switch(checked = settings.biometricEnabled, onCheckedChange = onBiometricChange)
                 },
             )
             ListItem(
@@ -146,7 +149,7 @@ fun SettingsScreen(
 
     if (paletteDialog) {
         PaletteDialog(
-            current = paletteId,
+            current = settings.paletteId,
             onSelect = {
                 onPaletteChange(it)
                 paletteDialog = false
@@ -157,8 +160,8 @@ fun SettingsScreen(
 
     if (fontDialog) {
         FontDialog(
-            fontSizeSp = fontSizeSp,
-            lineSpacing = lineSpacing,
+            fontSizeSp = settings.fontSizeSp,
+            lineSpacing = settings.lineSpacing,
             onApply = { size, spacing ->
                 onFontChange(size, spacing)
                 fontDialog = false

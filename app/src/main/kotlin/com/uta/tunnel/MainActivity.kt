@@ -56,7 +56,9 @@ import com.uta.tunnel.data.HostProfile
 import com.uta.tunnel.data.ProfileRepository
 import com.uta.tunnel.data.RoomHostKeyStore
 import com.uta.tunnel.data.SettingsStore
+import com.uta.tunnel.data.SettingsUiState
 import com.uta.tunnel.data.SshKeyRepository
+import com.uta.tunnel.data.rememberSettingsUiState
 import com.uta.tunnel.session.SessionController
 import com.uta.tunnel.terminal.TerminalPalettes
 import com.uta.tunnel.ui.BiometricGate
@@ -89,10 +91,10 @@ class MainActivity : FragmentActivity() {
         val container = (application as TunnelApp).container
         setContent {
             TunnelTheme {
-                val biometricEnabled by container.settingsStore.biometricEnabled
-                    .collectAsState(initial = true)
+                // 設定はここで一度だけ購読し、ロック判定と AppRoot の両方に配る。
+                val settings = rememberSettingsUiState(container.settingsStore)
                 // 設定で有効かつ端末対応時、起動/復帰でロック（デバッグビルドは無効）。
-                BiometricGate(enabled = biometricEnabled) {
+                BiometricGate(enabled = settings.biometricEnabled) {
                     AppRoot(
                         container.sessionManager,
                         container.sessionController,
@@ -100,6 +102,7 @@ class MainActivity : FragmentActivity() {
                         container.sshKeyRepository,
                         container.hostKeyStore,
                         container.settingsStore,
+                        settings,
                     )
                 }
             }
@@ -161,28 +164,21 @@ private fun AppRoot(
     sshKeyRepository: SshKeyRepository,
     hostKeyStore: RoomHostKeyStore,
     settingsStore: SettingsStore,
+    settings: SettingsUiState,
 ) {
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val sessions by sessionManager.sessions.collectAsState()
-    // 下タブの並び順設定（既定はホスト先頭、true でセッションを先頭に）。
-    val sessionsTabFirst by settingsStore.sessionsTabFirst.collectAsState(initial = false)
+    val sessionsTabFirst = settings.sessionsTabFirst
 
-    // 端末の見た目（設定 > 外観）。端末画面と設定画面の両方が同じ値を見る。
-    val fontSizeSp by settingsStore.terminalFontSizeSp
-        .collectAsState(initial = SettingsStore.DEFAULT_FONT_SIZE_SP)
-    val lineSpacing by settingsStore.terminalLineSpacing
-        .collectAsState(initial = SettingsStore.DEFAULT_LINE_SPACING)
-    val paletteId by settingsStore.terminalPaletteId
-        .collectAsState(initial = TerminalPalettes.Default.id)
     // Dynamic Color は ColorScheme が要るので Composable 側でしか組み立てられない。
     val colorScheme = MaterialTheme.colorScheme
-    val palette = remember(paletteId, colorScheme) {
-        if (paletteId == TerminalPalettes.DYNAMIC_ID) {
+    val palette = remember(settings.paletteId, colorScheme) {
+        if (settings.paletteId == TerminalPalettes.DYNAMIC_ID) {
             TerminalPalettes.dynamic(colorScheme)
         } else {
-            TerminalPalettes.byId(paletteId) ?: TerminalPalettes.Default
+            TerminalPalettes.byId(settings.paletteId) ?: TerminalPalettes.Default
         }
     }
 
@@ -286,8 +282,8 @@ private fun AppRoot(
                     currentSessionLabel = sessionController.label,
                     state = sessionController.state,
                     busy = sessionController.busy,
-                    fontSizeSp = fontSizeSp,
-                    lineSpacing = lineSpacing,
+                    fontSizeSp = settings.fontSizeSp,
+                    lineSpacing = settings.lineSpacing,
                     palette = palette,
                     onFontSizeChange = { size ->
                         scope.launch { settingsStore.setTerminalFontSizeSp(size) }
@@ -425,23 +421,18 @@ private fun AppRoot(
                 )
             }
             composable(Routes.SETTINGS) {
-                val biometricEnabled by settingsStore.biometricEnabled.collectAsState(initial = true)
                 SettingsScreen(
                     // タブとして表示するので戻る矢印は出さない（onBack=null）。
-                    biometricEnabled = biometricEnabled,
+                    settings = settings,
                     onBiometricChange = { enabled ->
                         scope.launch { settingsStore.setBiometricEnabled(enabled) }
                     },
-                    sessionsTabFirst = sessionsTabFirst,
                     onSessionsTabFirstChange = { enabled ->
                         scope.launch { settingsStore.setSessionsTabFirst(enabled) }
                     },
-                    paletteId = paletteId,
                     onPaletteChange = { id ->
                         scope.launch { settingsStore.setTerminalPaletteId(id) }
                     },
-                    fontSizeSp = fontSizeSp,
-                    lineSpacing = lineSpacing,
                     onFontChange = { size, spacing ->
                         scope.launch {
                             settingsStore.setTerminalFontSizeSp(size)
