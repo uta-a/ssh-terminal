@@ -12,6 +12,7 @@ import com.uta.tunnel.core.model.SessionId
 import com.uta.tunnel.core.model.SessionState
 import com.uta.tunnel.core.session.SessionInfo
 import com.uta.tunnel.core.session.SessionManager
+import com.uta.tunnel.core.ssh.HostKeyChangedException
 import com.uta.tunnel.core.ssh.HostKeyStore
 import com.uta.tunnel.core.ssh.SshConnectionRequest
 import com.uta.tunnel.core.ssh.SshShellSession
@@ -51,6 +52,22 @@ class SessionController(
     }
 
     private val sessions = mutableStateMapOf<SessionId, Session>()
+
+    /**
+     * ホスト鍵の変化を検知して承認待ちになっている接続。UI は MITM 警告ダイアログを出し、
+     * [approveHostKeyChange]（上書きして再接続）か [dismissHostKeyChange]（何もしない）を呼ぶ。
+     * 再接続に必要な材料を保持する。
+     */
+    data class PendingHostKeyChange(
+        val failedId: SessionId,
+        val cause: HostKeyChangedException,
+        val req: SshConnectionRequest,
+        val label: String,
+        val profileId: String?,
+    )
+
+    var pendingHostKeyChange by mutableStateOf<PendingHostKeyChange?>(null)
+        private set
 
     var activeId by mutableStateOf<SessionId?>(null)
         private set
@@ -99,9 +116,31 @@ class SessionController(
                     refreshNotification()
                 }
             } catch (e: Throwable) {
-                main.post { onFailed(id, e) }
+                main.post { onFailed(id, e, req, displayLabel, profileId) }
             }
         }
+    }
+
+    /**
+     * ホスト鍵の変化をユーザーが承認した：新しい鍵で上書きし、同じ宛先へ繋ぎ直す。
+     * 上書きは Room への書き込み＝メインスレッド不可なので、再接続スレッドの中で行う。
+     */
+    fun approveHostKeyChange() {
+        val p = pendingHostKeyChange ?: return
+        pendingHostKeyChange = null
+        // 承認された鍵で上書きしてから接続し直す。上書きが失敗すれば TOFU 照合で再び弾かれる。
+        thread(name = "hostkey-approve") {
+            runCatching { hostKeyStore.save(p.cause.presentedEntry) }
+            main.post {
+                removeSession(p.failedId)
+                connect(p.req, p.label, p.profileId)
+            }
+        }
+    }
+
+    /** 承認しない：鍵は書き換えず、接続もしない（失敗したセッションはそのまま残す）。 */
+    fun dismissHostKeyChange() {
+        pendingHostKeyChange = null
     }
 
     /** 表示するセッションを切り替える。 */
@@ -190,8 +229,28 @@ class SessionController(
         refreshNotification()
     }
 
-    private fun onFailed(id: SessionId, e: Throwable) {
+    private fun onFailed(
+        id: SessionId,
+        e: Throwable,
+        req: SshConnectionRequest,
+        label: String,
+        profileId: String?,
+    ) {
         val s = sessions[id] ?: return
+        // sshj が検証例外を包む場合があるため cause チェーンを辿って TOFU の不一致を拾う。
+        val hostKeyChanged = generateSequence(e) { it.cause }
+            .filterIsInstance<HostKeyChangedException>()
+            .firstOrNull()
+        if (hostKeyChanged != null) {
+            // フィンガープリントはログに出さない（UI のみで提示し、ユーザーの承認を求める）。
+            Log.w(TAG, "host key changed for ${req.host}:${req.port}")
+            feedNotice(s, "ホスト鍵が変化しています。承認するまで接続しません")
+            s.state = SessionState.Failed("ホスト鍵が変化")
+            sessionManager.upsert(SessionInfo(id, s.label, s.state, s.profileId))
+            pendingHostKeyChange = PendingHostKeyChange(id, hostKeyChanged, req, label, profileId)
+            refreshNotification()
+            return
+        }
         Log.w(TAG, "connect failed", e)
         feedNotice(s, "接続に失敗しました: ${e.message ?: e.javaClass.simpleName}")
         s.state = SessionState.Failed(e.message ?: "接続失敗")

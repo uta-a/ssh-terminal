@@ -10,18 +10,25 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -32,6 +39,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -46,6 +54,7 @@ import com.uta.tunnel.core.ssh.SshConnectionRequest
 import com.uta.tunnel.data.AuthInput
 import com.uta.tunnel.data.HostProfile
 import com.uta.tunnel.data.ProfileRepository
+import com.uta.tunnel.data.RoomHostKeyStore
 import com.uta.tunnel.data.SettingsStore
 import com.uta.tunnel.data.SshKeyRepository
 import com.uta.tunnel.session.SessionController
@@ -54,6 +63,7 @@ import com.uta.tunnel.ui.screens.AddressBookScreen
 import com.uta.tunnel.ui.screens.AuthSpec
 import com.uta.tunnel.ui.screens.ConnectScreen
 import com.uta.tunnel.ui.screens.KeysScreen
+import com.uta.tunnel.ui.screens.KnownHostsScreen
 import com.uta.tunnel.ui.screens.SessionsScreen
 import com.uta.tunnel.ui.screens.SettingsScreen
 import com.uta.tunnel.ui.screens.TerminalScreen
@@ -87,6 +97,7 @@ class MainActivity : FragmentActivity() {
                         container.sessionController,
                         container.profileRepository,
                         container.sshKeyRepository,
+                        container.hostKeyStore,
                         container.settingsStore,
                     )
                 }
@@ -102,6 +113,7 @@ private object Routes {
     const val CONNECT = "connect?editId={editId}"
     const val SETTINGS = "settings"
     const val KEYS = "keys"
+    const val KNOWN_HOSTS = "known_hosts"
 
     /** 下タブとして出すトップレベルルート（この3つでのみボトムナビを表示）。 */
     val TOP_LEVEL = setOf(SESSIONS, ADDRESS_BOOK, SETTINGS)
@@ -146,6 +158,7 @@ private fun AppRoot(
     sessionController: SessionController,
     profileRepository: ProfileRepository,
     sshKeyRepository: SshKeyRepository,
+    hostKeyStore: RoomHostKeyStore,
     settingsStore: SettingsStore,
 ) {
     val navController = rememberNavController()
@@ -400,8 +413,84 @@ private fun AppRoot(
                         scope.launch { settingsStore.setSessionsTabFirst(enabled) }
                     },
                     onOpenKeys = { navController.navigate(Routes.KEYS) },
+                    onOpenKnownHosts = { navController.navigate(Routes.KNOWN_HOSTS) },
+                )
+            }
+            composable(Routes.KNOWN_HOSTS) {
+                val hosts by hostKeyStore.observeAll().collectAsState(initial = emptyList())
+                KnownHostsScreen(
+                    hosts = hosts,
+                    onBack = { navController.popBackStack() },
+                    onDelete = { entry ->
+                        scope.launch { hostKeyStore.deleteAsync(entry.address) }
+                    },
                 )
             }
         }
     }
+
+    // ホスト鍵が変化したときの MITM 警告。承認するまで上書きも接続もしない。
+    // タブ位置に関わらず出したいので NavHost の外に置く。
+    sessionController.pendingHostKeyChange?.let { pending ->
+        HostKeyChangedDialog(
+            pending = pending,
+            onApprove = { sessionController.approveHostKeyChange() },
+            onDismiss = { sessionController.dismissHostKeyChange() },
+        )
+    }
+}
+
+/**
+ * ホスト鍵の変化を提示し、明示的な承認を求めるダイアログ。
+ *
+ * 中間者攻撃と区別がつかないため、既定の導線はキャンセル（＝接続しない）。承認したときだけ
+ * 新しい鍵で上書きして繋ぎ直す。判断材料として旧/新のフィンガープリントを併記する。
+ */
+@Composable
+private fun HostKeyChangedDialog(
+    pending: SessionController.PendingHostKeyChange,
+    onApprove: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                Icons.Filled.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+            )
+        },
+        title = { Text("ホスト鍵が変化しています") },
+        text = {
+            Column {
+                Text(
+                    "「${pending.cause.address}」が前回と異なる鍵を提示しました。" +
+                        "サーバーを再構築した場合にも起こりますが、通信が傍受されている" +
+                        "（中間者攻撃）可能性もあります。心当たりが無ければ承認しないでください。",
+                )
+                Spacer(Modifier.height(12.dp))
+                Text("以前の鍵", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    "${pending.cause.expected.keyType} · ${pending.cause.expected.fingerprint}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text("今回の鍵", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    "${pending.cause.presentedKeyType} · ${pending.cause.presentedFingerprint}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("キャンセル") }
+        },
+        dismissButton = {
+            TextButton(onClick = onApprove) {
+                Text("承認して接続", color = MaterialTheme.colorScheme.error)
+            }
+        },
+    )
 }

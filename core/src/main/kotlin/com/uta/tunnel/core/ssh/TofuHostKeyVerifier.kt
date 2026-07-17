@@ -3,14 +3,24 @@ package com.uta.tunnel.core.ssh
 import com.uta.tunnel.core.model.HostAddress
 import com.uta.tunnel.core.model.HostKeyEntry
 
-/** 提示されたホスト鍵が既知の鍵と一致しないときに投げる。UI は MITM 警告を出す。 */
+/**
+ * 提示されたホスト鍵が既知の鍵と一致しないときに投げる。UI は MITM 警告を出す。
+ *
+ * [presentedKeyType] と [presentedFingerprint] は、ユーザーが承認したときに
+ * [HostKeyStore.save] で上書きする新エントリの材料になる（[presentedEntry]）。
+ */
 class HostKeyChangedException(
     val address: HostAddress,
     val expected: HostKeyEntry,
+    val presentedKeyType: String,
     val presentedFingerprint: String,
 ) : Exception(
     "ホスト鍵が変化しました: $address 期待=${expected.fingerprint} 提示=$presentedFingerprint",
-)
+) {
+    /** ユーザーが承認した場合に保存する新しいエントリ。 */
+    val presentedEntry: HostKeyEntry
+        get() = HostKeyEntry(address, presentedKeyType, presentedFingerprint)
+}
 
 /** TOFU 照合の結果。 */
 sealed interface TofuResult {
@@ -42,7 +52,7 @@ class TofuHostKeyVerifier(private val store: HostKeyStore) {
                 TofuResult.FirstSeen(entry)
             }
             known.fingerprint == fingerprint -> TofuResult.Trusted
-            else -> throw HostKeyChangedException(address, known, fingerprint)
+            else -> throw HostKeyChangedException(address, known, keyType, fingerprint)
         }
     }
 }

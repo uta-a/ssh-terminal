@@ -4,9 +4,8 @@ import android.app.Application
 import android.content.Context
 import androidx.room.Room
 import com.uta.tunnel.core.session.SessionManager
-import com.uta.tunnel.core.ssh.HostKeyStore
-import com.uta.tunnel.core.ssh.InMemoryHostKeyStore
 import com.uta.tunnel.data.ProfileRepository
+import com.uta.tunnel.data.RoomHostKeyStore
 import com.uta.tunnel.data.SettingsStore
 import com.uta.tunnel.data.SshKeyRepository
 import com.uta.tunnel.data.TunnelDatabase
@@ -23,29 +22,28 @@ class AppContainer(app: Application) {
     // 開いているセッションのレジストリ。UI（ドロワー）とサービスが共有する。
     val sessionManager = SessionManager()
 
-    // 既知ホスト鍵ストア。MVP はインメモリ（起動ごとに TOFU がリセット）。
-    // TODO: Room 実装へ差し替える（永続 TOFU）。
-    val hostKeyStore: HostKeyStore = InMemoryHostKeyStore()
-
-    // アクティブな SSH セッションのライフサイクル管理（EmulatorHost を保持）。
-    val sessionController = SessionController(appContext, sessionManager, hostKeyStore)
-
-    // 接続プロファイル・鍵ストアの永続化（Room）。秘密は Keystore で暗号化して保存する。
+    // 接続プロファイル・鍵ストア・既知ホスト鍵の永続化（Room）。秘密は Keystore で暗号化して保存する。
+    // hostKeyStore がこれに依存するため、database は必ず先に初期化する。
     private val database = Room.databaseBuilder(appContext, TunnelDatabase::class.java, "tunnel.db")
         .addMigrations(
             TunnelDatabase.MIGRATION_1_2,
             TunnelDatabase.MIGRATION_2_3,
             TunnelDatabase.MIGRATION_3_4,
+            TunnelDatabase.MIGRATION_4_5,
         )
         .build()
     val sshKeyRepository = SshKeyRepository(database.sshKeyDao(), database.profileDao())
     val profileRepository =
         ProfileRepository(database.profileDao(), database.tagDao(), sshKeyRepository)
 
-    // アプリ設定（生体認証 ON/OFF 等）。
-    val settingsStore = SettingsStore(appContext)
+    // 既知ホスト鍵ストア（永続 TOFU）。2 回目以降の接続で鍵の同一性を検証する。
+    val hostKeyStore = RoomHostKeyStore(database.hostKeyDao())
 
-    // TODO: settings（DataStore）・HostKeyEntry の永続 TOFU をセッション実装フェーズで追加する。
+    // アクティブな SSH セッションのライフサイクル管理（EmulatorHost を保持）。
+    val sessionController = SessionController(appContext, sessionManager, hostKeyStore)
+
+    // アプリ設定（生体認証 ON/OFF・端末の見た目等）。
+    val settingsStore = SettingsStore(appContext)
 }
 
 class TunnelApp : Application() {

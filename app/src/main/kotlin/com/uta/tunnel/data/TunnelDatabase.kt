@@ -11,14 +11,16 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SshKeyEntity::class,
         TagEntity::class,
         ProfileTagCrossRef::class,
+        HostKeyEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class TunnelDatabase : RoomDatabase() {
     abstract fun profileDao(): ProfileDao
     abstract fun sshKeyDao(): SshKeyDao
     abstract fun tagDao(): TagDao
+    abstract fun hostKeyDao(): HostKeyDao
 
     companion object {
         /** v1→v2：手動並び替え用の sortOrder 列を追加（既存行は 0）。 */
@@ -90,6 +92,28 @@ abstract class TunnelDatabase : RoomDatabase() {
                 )
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_profile_tags_tagId` ON `profile_tags` (`tagId`)",
+                )
+            }
+        }
+
+        /**
+         * v4→v5：既知ホスト鍵（host_keys）テーブルを追加し、TOFU をインメモリから永続化へ移す。
+         * DDL のみ。これ以前はプロセス終了ごとに既知ホストが消えていたため、移行するデータは無い
+         * （初回接続扱いで各ホストが改めて登録される）。
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `host_keys` (
+                        `host` TEXT NOT NULL,
+                        `port` INTEGER NOT NULL,
+                        `keyType` TEXT NOT NULL,
+                        `fingerprint` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`host`, `port`)
+                    )
+                    """.trimIndent(),
                 )
             }
         }

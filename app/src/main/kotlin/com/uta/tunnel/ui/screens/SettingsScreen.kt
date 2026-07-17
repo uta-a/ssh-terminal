@@ -34,6 +34,7 @@ fun SettingsScreen(
     sessionsTabFirst: Boolean,
     onSessionsTabFirstChange: (Boolean) -> Unit,
     onOpenKeys: () -> Unit,
+    onOpenKnownHosts: () -> Unit,
     onBack: (() -> Unit)? = null,
 ) {
     Scaffold(
@@ -91,7 +92,11 @@ fun SettingsScreen(
                     Switch(checked = biometricEnabled, onCheckedChange = onBiometricChange)
                 },
             )
-            PlaceholderItem("既知ホスト（TOFU）", "保存済みフィンガープリントの管理")
+            ListItem(
+                headlineContent = { Text("既知ホスト（TOFU）") },
+                supportingContent = { Text("初回接続で信頼したホスト鍵の確認・削除") },
+                modifier = Modifier.clickable(onClick = onOpenKnownHosts),
+            )
             ListItem(
                 headlineContent = { Text("鍵管理") },
                 supportingContent = { Text("SSH 秘密鍵の登録・公開鍵コピー・削除") },
