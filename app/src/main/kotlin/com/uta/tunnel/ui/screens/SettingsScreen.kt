@@ -20,6 +20,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.uta.tunnel.BuildConfig
 
 /**
  * 設定画面。TopAppBar + スクロール Column にセクションを並べる IR Tool 流儀。
@@ -98,7 +99,7 @@ fun SettingsScreen(
             )
 
             SettingsSectionTitle("情報")
-            PlaceholderItem("バージョン", "0.1.0")
+            PlaceholderItem("バージョン", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
         }
     }
 }
