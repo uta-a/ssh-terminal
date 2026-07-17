@@ -290,6 +290,7 @@ private fun AppRoot(
                     },
                     onBack = { navController.popBackStack() },
                     onDisconnect = { sessionController.disconnect() },
+                    onReconnect = { sessionController.reconnectActive() },
                     onRename = { name -> sessionController.rename(name) },
                     // セッションが無くなったら（切断直後など）直前のタブへ戻す。
                     onExit = { navController.popBackStack() },

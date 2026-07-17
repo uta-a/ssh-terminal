@@ -44,6 +44,8 @@ class SessionController(
         val transport: SshTransport,
         /** 由来した保存済みホスト（アドレス帳）の id。クイック接続や非保存は null。 */
         val profileId: String?,
+        /** この接続の元リクエスト。切断後の再接続で同じ宛先・認証へ繋ぎ直すために保持する。 */
+        val req: SshConnectionRequest,
     ) {
         var label by mutableStateOf("")
         var state by mutableStateOf<SessionState>(SessionState.Connecting)
@@ -88,7 +90,7 @@ class SessionController(
         val ssh = SshShellSession(TofuHostKeyVerifier(hostKeyStore))
         val transport = SshTransport(ssh)
         val emu = EmulatorHost(req.cols.coerceAtLeast(2), req.rows.coerceAtLeast(2), transport)
-        val session = Session(id, emu, ssh, transport, profileId).apply {
+        val session = Session(id, emu, ssh, transport, profileId, req).apply {
             this.label = displayLabel
             this.state = SessionState.Connecting
         }
@@ -163,6 +165,27 @@ class SessionController(
         } ?: return false
         setActive(target)
         return true
+    }
+
+    /** 切断/失敗したアクティブセッションを、同じ接続情報で繋ぎ直す。 */
+    fun reconnectActive() {
+        val id = activeId ?: return
+        reconnect(id)
+    }
+
+    /**
+     * 指定セッションを同じ宛先・認証で繋ぎ直す。生存中（接続中/確立済み）のセッションには何もしない。
+     * 端末バッファは作り直す（サーバー側も新しいシェルになるため）。表示名は引き継ぐ。
+     */
+    fun reconnect(id: SessionId) {
+        val s = sessions[id] ?: return
+        if (s.state is SessionState.Connecting || s.state is SessionState.Connected) return
+        val req = s.req
+        val label = s.label
+        val profileId = s.profileId
+        // 旧セッションを破棄してから同じ表示名で繋ぎ直す（破棄後なので name の一意化は衝突しない）。
+        removeSession(id)
+        connect(req, label, profileId)
     }
 
     /** アクティブセッションを切断・破棄する。他に生きたセッションがあればそれをアクティブにする。 */

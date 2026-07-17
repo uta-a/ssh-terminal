@@ -112,6 +112,7 @@ fun TerminalScreen(
     onFontSizeChange: (Float) -> Unit,
     onBack: () -> Unit,
     onDisconnect: () -> Unit,
+    onReconnect: () -> Unit,
     onRename: (String) -> Unit,
     onExit: () -> Unit,
 ) {
@@ -250,6 +251,13 @@ fun TerminalScreen(
                             },
                         )
                         HorizontalDivider()
+                        // 切断/失敗しているときだけ「再接続」を出す（同じ宛先へ繋ぎ直す）。
+                        if (state is SessionState.Disconnected || state is SessionState.Failed) {
+                            DropdownMenuItem(
+                                text = { Text("再接続") },
+                                onClick = { menuOpen = false; onReconnect() },
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("セッションを切断") },
                             onClick = { menuOpen = false; onDisconnect() },
