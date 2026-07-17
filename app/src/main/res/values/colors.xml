@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- ランチャーアイコン背景／ウィンドウ土台色（沈んだダーク）。 -->
-    <color name="ic_launcher_background">#0E1116</color>
+    <!-- ランチャーアイコン背景（Tailscale 調の warm ニアブラック）。純黒ではない温かみのある暗地。 -->
+    <color name="ic_launcher_background">#232222</color>
+    <!-- ウィンドウ土台色（沈んだダーク）。Compose の背景 #0E1116 と一致させ、起動時のちらつきを防ぐ。 -->
+    <color name="window_background">#0E1116</color>
 </resources>

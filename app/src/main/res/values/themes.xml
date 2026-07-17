@@ -2,6 +2,6 @@
 <resources>
     <!-- Compose が UI 全体を描画するため、XML テーマはウィンドウの土台のみを担う。 -->
     <style name="Theme.Tunnel" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@color/ic_launcher_background</item>
+        <item name="android:windowBackground">@color/window_background</item>
     </style>
 </resources>
