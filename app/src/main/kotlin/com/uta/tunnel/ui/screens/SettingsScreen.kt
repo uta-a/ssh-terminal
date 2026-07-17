@@ -52,12 +52,14 @@ fun SettingsScreen(
     onBiometricChange: (Boolean) -> Unit,
     onSessionsTabFirstChange: (Boolean) -> Unit,
     onPaletteChange: (String) -> Unit,
+    onThemeModeChange: (String) -> Unit,
     onFontChange: (sizeSp: Float, lineSpacing: Float) -> Unit,
     onOpenKeys: () -> Unit,
     onOpenKnownHosts: () -> Unit,
     onBack: (() -> Unit)? = null,
 ) {
     var paletteDialog by rememberSaveable { mutableStateOf(false) }
+    var themeModeDialog by rememberSaveable { mutableStateOf(false) }
     var fontDialog by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
@@ -82,6 +84,11 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState()),
         ) {
             SettingsSectionTitle("外観")
+            ListItem(
+                headlineContent = { Text("テーマモード（明暗）") },
+                supportingContent = { Text(themeModeLabel(settings.themeMode)) },
+                modifier = Modifier.clickable { themeModeDialog = true },
+            )
             ListItem(
                 headlineContent = { Text("テーマ・配色パレット") },
                 supportingContent = { Text(paletteLabel(settings.paletteId)) },
@@ -150,6 +157,17 @@ fun SettingsScreen(
         }
     }
 
+    if (themeModeDialog) {
+        ThemeModeDialog(
+            current = settings.themeMode,
+            onSelect = {
+                onThemeModeChange(it)
+                themeModeDialog = false
+            },
+            onDismiss = { themeModeDialog = false },
+        )
+    }
+
     if (paletteDialog) {
         PaletteDialog(
             current = settings.paletteId,
@@ -178,6 +196,50 @@ fun SettingsScreen(
 private fun paletteLabel(id: String): String = when (id) {
     TerminalPalettes.DYNAMIC_ID -> "Dynamic Color（壁紙連動）"
     else -> (TerminalPalettes.byId(id) ?: TerminalPalettes.Default).label
+}
+
+/** 明暗モードの表示名。 */
+private fun themeModeLabel(mode: String): String = when (mode) {
+    SettingsStore.THEME_MODE_LIGHT -> "ライト"
+    SettingsStore.THEME_MODE_DARK -> "ダーク"
+    else -> "システムに追従"
+}
+
+@Composable
+private fun ThemeModeDialog(
+    current: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val options = listOf(
+        SettingsStore.THEME_MODE_SYSTEM to "システムに追従",
+        SettingsStore.THEME_MODE_LIGHT to "ライト",
+        SettingsStore.THEME_MODE_DARK to "ダーク",
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("テーマモード") },
+        text = {
+            Column {
+                options.forEach { (mode, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(mode) }
+                            .padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = mode == current, onClick = { onSelect(mode) })
+                        Spacer(Modifier.width(8.dp))
+                        Text(label)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("閉じる") }
+        },
+    )
 }
 
 @Composable

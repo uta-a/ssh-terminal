@@ -10,6 +10,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -71,6 +72,7 @@ import com.uta.tunnel.ui.screens.SessionsScreen
 import com.uta.tunnel.ui.screens.SettingsScreen
 import com.uta.tunnel.ui.screens.TerminalScreen
 import com.uta.tunnel.ui.theme.TunnelTheme
+import com.uta.tunnel.ui.theme.resolveDarkTheme
 import kotlinx.coroutines.launch
 
 // 生体認証（BiometricPrompt）を使うため FragmentActivity を継承する。
@@ -90,9 +92,10 @@ class MainActivity : FragmentActivity() {
         }
         val container = (application as TunnelApp).container
         setContent {
-            TunnelTheme {
-                // 設定はここで一度だけ購読し、ロック判定と AppRoot の両方に配る。
-                val settings = rememberSettingsUiState(container.settingsStore)
+            // 設定はここで一度だけ購読し、テーマ・ロック判定・AppRoot に配る。
+            // paletteId でアプリ全体の配色を決めるため TunnelTheme の外で取得する。
+            val settings = rememberSettingsUiState(container.settingsStore)
+            TunnelTheme(paletteId = settings.paletteId, themeMode = settings.themeMode) {
                 // 設定で有効かつ端末対応時、起動/復帰でロック（デバッグビルドは無効）。
                 BiometricGate(enabled = settings.biometricEnabled) {
                     AppRoot(
@@ -172,13 +175,15 @@ private fun AppRoot(
     val sessions by sessionManager.sessions.collectAsState()
     val sessionsTabFirst = settings.sessionsTabFirst
 
+    // 端末パレットもテーマモードの明暗で解決する（アプリ全体の配色と一致させる）。
+    val dark = resolveDarkTheme(settings.themeMode, isSystemInDarkTheme())
     // Dynamic Color は ColorScheme が要るので Composable 側でしか組み立てられない。
     val colorScheme = MaterialTheme.colorScheme
-    val palette = remember(settings.paletteId, colorScheme) {
+    val palette = remember(settings.paletteId, colorScheme, dark) {
         if (settings.paletteId == TerminalPalettes.DYNAMIC_ID) {
             TerminalPalettes.dynamic(colorScheme)
         } else {
-            TerminalPalettes.byId(settings.paletteId) ?: TerminalPalettes.Default
+            TerminalPalettes.resolve(settings.paletteId, dark)
         }
     }
 
@@ -453,6 +458,9 @@ private fun AppRoot(
                     },
                     onPaletteChange = { id ->
                         scope.launch { settingsStore.setTerminalPaletteId(id) }
+                    },
+                    onThemeModeChange = { mode ->
+                        scope.launch { settingsStore.setThemeMode(mode) }
                     },
                     onFontChange = { size, spacing ->
                         scope.launch {

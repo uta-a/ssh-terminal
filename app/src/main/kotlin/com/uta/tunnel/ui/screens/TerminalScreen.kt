@@ -73,6 +73,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -368,10 +369,12 @@ fun TerminalScreen(
                     ) {
                         // 既定文字色＝もとの Material You 色（primary）。確定インラインも送信後の端末出力も同色。
                         val baseFgArgb = MaterialTheme.colorScheme.primary.toArgb()
-                        // 入力中（IME 変換中）だけ primary を白へ寄せて明るくし、目立たせる。
+                        // 入力中（IME 変換中）だけ primary をコントラスト方向へ寄せて目立たせる。
+                        // 暗い端末背景では白へ、明るい背景（ライトテーマ）では黒へ寄せる。
+                        val lightBg = Color(palette.background).luminance() > 0.5f
                         val composingColorArgb = lerp(
                             MaterialTheme.colorScheme.primary,
-                            Color.White,
+                            if (lightBg) Color.Black else Color.White,
                             0.62f,
                         ).toArgb()
                         val composition = inputTfv.composition

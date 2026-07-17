@@ -72,8 +72,25 @@ class SettingsStore(private val context: Context) {
         context.dataStore.edit { it[KEY_PALETTE] = id }
     }
 
+    /** アプリ全体の明暗モード（"system"/"light"/"dark"）。配色系統とは別に明暗を制御する。 */
+    val themeMode: Flow<String> =
+        context.dataStore.data.map { it[KEY_THEME_MODE] ?: DEFAULT_THEME_MODE }
+
+    suspend fun setThemeMode(mode: String) {
+        val safe = if (mode in THEME_MODES) mode else DEFAULT_THEME_MODE
+        context.dataStore.edit { it[KEY_THEME_MODE] = safe }
+    }
+
     companion object {
-        const val DEFAULT_PALETTE_ID = "catppuccin_mocha"
+        // 既定はアプリ全体が壁紙連動（Material You）。プリセットを選ぶとその配色が全体へ適用される。
+        const val DEFAULT_PALETTE_ID = "dynamic"
+
+        // 明暗モード。配色系統（パレット）とは独立に、アプリ全体の明暗を決める。
+        const val THEME_MODE_SYSTEM = "system"
+        const val THEME_MODE_LIGHT = "light"
+        const val THEME_MODE_DARK = "dark"
+        const val DEFAULT_THEME_MODE = THEME_MODE_SYSTEM
+        val THEME_MODES = listOf(THEME_MODE_SYSTEM, THEME_MODE_LIGHT, THEME_MODE_DARK)
 
         const val DEFAULT_FONT_SIZE_SP = 14f
         const val MIN_FONT_SIZE_SP = 8f
@@ -88,5 +105,6 @@ class SettingsStore(private val context: Context) {
         private val KEY_FONT_SIZE_SP = floatPreferencesKey("terminal_font_size_sp")
         private val KEY_LINE_SPACING = floatPreferencesKey("terminal_line_spacing")
         private val KEY_PALETTE = stringPreferencesKey("terminal_palette")
+        private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
     }
 }

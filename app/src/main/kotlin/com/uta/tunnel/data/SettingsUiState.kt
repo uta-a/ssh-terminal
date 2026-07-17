@@ -15,6 +15,7 @@ data class SettingsUiState(
     val biometricEnabled: Boolean?,
     val sessionsTabFirst: Boolean,
     val paletteId: String,
+    val themeMode: String,
     val fontSizeSp: Float,
     val lineSpacing: Float,
 )
@@ -28,6 +29,8 @@ fun rememberSettingsUiState(store: SettingsStore): SettingsUiState {
     val sessionsTabFirst by store.sessionsTabFirst.collectAsState(initial = false)
     val paletteId by store.terminalPaletteId
         .collectAsState(initial = SettingsStore.DEFAULT_PALETTE_ID)
+    val themeMode by store.themeMode
+        .collectAsState(initial = SettingsStore.DEFAULT_THEME_MODE)
     val fontSizeSp by store.terminalFontSizeSp
         .collectAsState(initial = SettingsStore.DEFAULT_FONT_SIZE_SP)
     val lineSpacing by store.terminalLineSpacing
@@ -36,6 +39,7 @@ fun rememberSettingsUiState(store: SettingsStore): SettingsUiState {
         biometricEnabled = biometricEnabled,
         sessionsTabFirst = sessionsTabFirst,
         paletteId = paletteId,
+        themeMode = themeMode,
         fontSizeSp = fontSizeSp,
         lineSpacing = lineSpacing,
     )
