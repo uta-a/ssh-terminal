@@ -29,6 +29,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
@@ -80,7 +81,8 @@ private val tagListSaver: Saver<MutableState<List<String>>, String> = Saver(
 
 /**
  * 接続フォーム。新規（[initial] == null）と編集（!= null）を兼ねる。
- * - 新規：入力した接続情報で即座に SSH セッションを張る（保存は任意）。
+ * - 新規：保存の有無を選べる。保存する場合は「保存だけ」（[onSaveOnly]、接続せず一覧へ戻る）と
+ *   「保存して接続」（[onConnect]）を選べる。保存しない場合は接続のみ（使い捨て接続）。
  * - 編集：非秘密情報をプリフィルする。パスワードは「変更する」を押したときだけ再入力、
  *   鍵は鍵ストアのドロップダウンで付け替え（未変更なら [onSaveEdit] の auth に null を渡す）。
  * - 秘密鍵タブは鍵ストア（[keys]）から選択するか、新しい鍵を貼り付けて登録する。
@@ -94,6 +96,8 @@ fun ConnectScreen(
     onConnect: (label: String, host: String, port: Int, username: String, auth: AuthSpec, save: Boolean, tags: List<String>) -> Unit,
     initial: HostProfile? = null,
     onSaveEdit: (label: String, host: String, port: Int, username: String, auth: AuthSpec?, tags: List<String>) -> Unit =
+        { _, _, _, _, _, _ -> },
+    onSaveOnly: (label: String, host: String, port: Int, username: String, auth: AuthSpec, tags: List<String>) -> Unit =
         { _, _, _, _, _, _ -> },
 ) {
     val editing = initial != null
@@ -171,6 +175,14 @@ fun ConnectScreen(
         } else {
             onConnect(displayLabel, host.trim(), p, username.trim(), spec ?: return, save, tagList)
         }
+    }
+
+    /** 新規フォームで「保存だけ」。接続はせず、保存して一覧へ戻る。 */
+    fun submitSaveOnly() {
+        val p = portNum ?: return
+        val displayLabel = label.trim().ifEmpty { "${username.trim()}@${host.trim()}" }
+        val spec = buildSpec(displayLabel) ?: return
+        onSaveOnly(displayLabel, host.trim(), p, username.trim(), spec, tags.value)
     }
 
     fun addTag(raw: String) {
@@ -371,22 +383,40 @@ fun ConnectScreen(
             }
 
             Spacer(Modifier.height(4.dp))
-            Button(
-                onClick = { submit() },
-                enabled = canSubmit,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    when {
-                        editing -> "保存"
-                        save -> "保存して接続"
-                        else -> "接続"
-                    },
-                )
+            // 保存する場合は「保存だけ」と「保存して接続」を分ける。保存しない（使い捨て接続）と
+            // 編集時は選択肢が 1 つしか無いので単独ボタンにする。
+            if (!editing && save) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = { submitSaveOnly() },
+                        enabled = canSubmit,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("保存だけ")
+                    }
+                    Button(
+                        onClick = { submit() },
+                        enabled = canSubmit,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("保存して接続")
+                    }
+                }
+            } else {
+                Button(
+                    onClick = { submit() },
+                    enabled = canSubmit,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (editing) "保存" else "接続")
+                }
             }
             if (!editing) {
                 Text(
-                    "ホスト鍵は初回接続時に信頼保存されます（TOFU）。現在は起動ごとにリセットされます。",
+                    "ホスト鍵は初回接続時に信頼保存されます（TOFU）。設定 > 既知ホストで確認・削除できます。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

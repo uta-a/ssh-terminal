@@ -384,6 +384,26 @@ private fun AppRoot(
                                 }
                             }
                         },
+                        onSaveOnly = { label, host, port, username, spec, tags ->
+                            scope.launch {
+                                // 接続しないので SshAuth は使わず、保存用の AuthInput だけ作る。
+                                // 新しい鍵はここで鍵ストアへ登録し、以後は参照（keyId）で扱う。
+                                val input = try {
+                                    when (spec) {
+                                        is AuthSpec.Password -> AuthInput.Password(spec.password)
+                                        is AuthSpec.ExistingKey -> AuthInput.KeyRef(spec.keyId)
+                                        is AuthSpec.NewKey -> AuthInput.KeyRef(
+                                            sshKeyRepository.add(spec.name, spec.pem, spec.passphrase),
+                                        )
+                                    }
+                                } catch (e: Throwable) {
+                                    Toast.makeText(context, "認証情報の保存に失敗しました", Toast.LENGTH_SHORT).show()
+                                    return@launch
+                                }
+                                profileRepository.save(label, host, port, username, input, tags)
+                                navController.popBackStack()
+                            }
+                        },
                         onSaveEdit = { label, host, port, username, spec, tags ->
                             val id = initial?.id
                             scope.launch {
