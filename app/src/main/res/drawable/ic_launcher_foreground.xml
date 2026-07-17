@@ -4,45 +4,20 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <!--
-      シェル窓＋プロンプト（白）。adaptive icon のセーフゾーン（中心 54,54 / 半径 33 の円）に
-      収めるため窓枠は 52x40（半対角 ≒ 32.8）に抑えている。ジオメトリは
-      ic_launcher_monochrome.xml と一致させること（テーマアイコンで形が変わらないため）。
+      プロンプト ❯_（白）。adaptive icon のセーフゾーン（中心 54,54 / 半径 33 の円）に収めている。
+      ジオメトリは ic_launcher_monochrome.xml と一致させること（テーマアイコンで形が変わらないため）。
     -->
-    <!-- 窓枠 -->
     <path
         android:strokeColor="#FFFFFF"
-        android:strokeWidth="5"
-        android:strokeLineJoin="round"
-        android:fillColor="#00000000"
-        android:pathData="M35,34 L73,34 A7,7 0 0 1 80,41 L80,67 A7,7 0 0 1 73,74 L35,74 A7,7 0 0 1 28,67 L28,41 A7,7 0 0 1 35,34 Z" />
-    <!-- タイトルバーの区切り線 -->
-    <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="5"
-        android:fillColor="#00000000"
-        android:pathData="M28,46 L80,46" />
-    <!-- タイトルバーのドット -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M36,37.5 A2.5,2.5 0 1 1 36,42.5 A2.5,2.5 0 1 1 36,37.5 Z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M45,37.5 A2.5,2.5 0 1 1 45,42.5 A2.5,2.5 0 1 1 45,37.5 Z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,37.5 A2.5,2.5 0 1 1 54,42.5 A2.5,2.5 0 1 1 54,37.5 Z" />
-    <!-- プロンプト（シェブロン＋アンダースコア） -->
-    <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="5"
+        android:strokeWidth="9"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
         android:fillColor="#00000000"
-        android:pathData="M38,53 L46,60 L38,67" />
+        android:pathData="M34,40 L50,54 L34,68" />
     <path
         android:strokeColor="#FFFFFF"
-        android:strokeWidth="5"
+        android:strokeWidth="9"
         android:strokeLineCap="round"
         android:fillColor="#00000000"
-        android:pathData="M51,67 L68,67" />
+        android:pathData="M56,68 L74,68" />
 </vector>
