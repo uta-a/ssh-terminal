@@ -58,6 +58,7 @@ import com.uta.tunnel.data.RoomHostKeyStore
 import com.uta.tunnel.data.SettingsStore
 import com.uta.tunnel.data.SshKeyRepository
 import com.uta.tunnel.session.SessionController
+import com.uta.tunnel.terminal.TerminalPalettes
 import com.uta.tunnel.ui.BiometricGate
 import com.uta.tunnel.ui.screens.AddressBookScreen
 import com.uta.tunnel.ui.screens.AuthSpec
@@ -168,6 +169,23 @@ private fun AppRoot(
     // 下タブの並び順設定（既定はホスト先頭、true でセッションを先頭に）。
     val sessionsTabFirst by settingsStore.sessionsTabFirst.collectAsState(initial = false)
 
+    // 端末の見た目（設定 > 外観）。端末画面と設定画面の両方が同じ値を見る。
+    val fontSizeSp by settingsStore.terminalFontSizeSp
+        .collectAsState(initial = SettingsStore.DEFAULT_FONT_SIZE_SP)
+    val lineSpacing by settingsStore.terminalLineSpacing
+        .collectAsState(initial = SettingsStore.DEFAULT_LINE_SPACING)
+    val paletteId by settingsStore.terminalPaletteId
+        .collectAsState(initial = TerminalPalettes.Default.id)
+    // Dynamic Color は ColorScheme が要るので Composable 側でしか組み立てられない。
+    val colorScheme = MaterialTheme.colorScheme
+    val palette = remember(paletteId, colorScheme) {
+        if (paletteId == TerminalPalettes.DYNAMIC_ID) {
+            TerminalPalettes.dynamic(colorScheme)
+        } else {
+            TerminalPalettes.byId(paletteId) ?: TerminalPalettes.Default
+        }
+    }
+
     // 起動タブは状況で切替：生存セッションがあれば「セッション」、無ければ「ホスト」。
     val startTab = remember {
         if (sessionManager.sessions.value.isNotEmpty()) Routes.SESSIONS else Routes.ADDRESS_BOOK
@@ -268,6 +286,12 @@ private fun AppRoot(
                     currentSessionLabel = sessionController.label,
                     state = sessionController.state,
                     busy = sessionController.busy,
+                    fontSizeSp = fontSizeSp,
+                    lineSpacing = lineSpacing,
+                    palette = palette,
+                    onFontSizeChange = { size ->
+                        scope.launch { settingsStore.setTerminalFontSizeSp(size) }
+                    },
                     onBack = { navController.popBackStack() },
                     onDisconnect = { sessionController.disconnect() },
                     onRename = { name -> sessionController.rename(name) },
@@ -411,6 +435,18 @@ private fun AppRoot(
                     sessionsTabFirst = sessionsTabFirst,
                     onSessionsTabFirstChange = { enabled ->
                         scope.launch { settingsStore.setSessionsTabFirst(enabled) }
+                    },
+                    paletteId = paletteId,
+                    onPaletteChange = { id ->
+                        scope.launch { settingsStore.setTerminalPaletteId(id) }
+                    },
+                    fontSizeSp = fontSizeSp,
+                    lineSpacing = lineSpacing,
+                    onFontChange = { size, spacing ->
+                        scope.launch {
+                            settingsStore.setTerminalFontSizeSp(size)
+                            settingsStore.setTerminalLineSpacing(spacing)
+                        }
                     },
                     onOpenKeys = { navController.navigate(Routes.KEYS) },
                     onOpenKnownHosts = { navController.navigate(Routes.KNOWN_HOSTS) },

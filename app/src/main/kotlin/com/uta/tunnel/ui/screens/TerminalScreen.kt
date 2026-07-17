@@ -88,10 +88,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.uta.tunnel.core.model.SessionState
+import com.uta.tunnel.data.SettingsStore
 import com.uta.tunnel.terminal.EmulatorHost
 import com.uta.tunnel.terminal.TerminalCanvas
 import com.uta.tunnel.terminal.TerminalPalette
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 /**
  * 端末ホーム画面。アクティブセッションの [EmulatorHost] を [SessionController] から受け取り、
@@ -104,6 +106,10 @@ fun TerminalScreen(
     currentSessionLabel: String?,
     state: SessionState,
     busy: Boolean,
+    fontSizeSp: Float,
+    lineSpacing: Float,
+    palette: TerminalPalette,
+    onFontSizeChange: (Float) -> Unit,
     onBack: () -> Unit,
     onDisconnect: () -> Unit,
     onRename: (String) -> Unit,
@@ -135,8 +141,20 @@ fun TerminalScreen(
     var inputTfv by rememberSaveable(host, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(""))
     }
-    // 端末フォントの表示倍率（ピンチで拡縮、⋮ メニューでリセット）。表示設定なので全セッション共通。回転で保持。
-    var fontScale by rememberSaveable { mutableStateOf(1f) }
+    // 端末フォントサイズ（sp）。設定値を初期値にし、ピンチ中はローカルで追従してから
+    // デバウンスして設定へ書き戻す（ピンチのたびに DataStore へ書くと重いため）。
+    // 表示設定なので全セッション共通。
+    var liveFontSizeSp by remember { mutableFloatStateOf(fontSizeSp) }
+    // 設定画面など外から変わったら追従する。
+    LaunchedEffect(fontSizeSp) { liveFontSizeSp = fontSizeSp }
+    LaunchedEffect(liveFontSizeSp) {
+        if (liveFontSizeSp != fontSizeSp) {
+            delay(400)
+            onFontSizeChange(liveFontSizeSp)
+        }
+    }
+    // 選択中パレットの ANSI 16 色をエミュレータへ反映する（背景・カーソルは Canvas へ直接渡す）。
+    LaunchedEffect(palette, host) { host.applyPalette(palette) }
     // 履歴スクロール量（行）。0＝最新（ライブ画面）。上方向ドラッグで増える。セッション固有。回転で保持。
     var scrollOffset by rememberSaveable(host) { mutableStateOf(0) }
     // ドラッグ px の端数を持ち越して行換算する。セッション固有（回転で消えても実害なし）。
@@ -218,15 +236,18 @@ fun TerminalScreen(
                             onClick = { menuOpen = false; showExtraKeys = !showExtraKeys },
                         )
                         HorizontalDivider()
-                        // 現在の表示サイズ（100% = 基準）。行自体は情報表示なので無効化。
+                        // 現在のフォントサイズ。行自体は情報表示なので無効化。
                         DropdownMenuItem(
-                            text = { Text("表示サイズ ${(fontScale * 100).roundToInt()}%") },
+                            text = { Text("表示サイズ ${liveFontSizeSp.roundToInt()} sp") },
                             onClick = {},
                             enabled = false,
                         )
                         DropdownMenuItem(
                             text = { Text("表示サイズをリセット") },
-                            onClick = { fontScale = 1f; menuOpen = false },
+                            onClick = {
+                                liveFontSizeSp = SettingsStore.DEFAULT_FONT_SIZE_SP
+                                menuOpen = false
+                            },
                         )
                         HorizontalDivider()
                         DropdownMenuItem(
@@ -272,7 +293,7 @@ fun TerminalScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 12.dp),
                     shape = RoundedCornerShape(18.dp),
-                    color = Color(TerminalPalette.BACKGROUND),
+                    color = Color(palette.background),
                     shadowElevation = 2.dp,
                 ) {
                     Box(
@@ -283,7 +304,10 @@ fun TerminalScreen(
                             .pointerInput(Unit) {
                                 detectTransformGestures { _, pan, zoom, _ ->
                                     if (zoom != 1f) {
-                                        fontScale = (fontScale * zoom).coerceIn(0.5f, 3.0f)
+                                        liveFontSizeSp = (liveFontSizeSp * zoom).coerceIn(
+                                            SettingsStore.MIN_FONT_SIZE_SP,
+                                            SettingsStore.MAX_FONT_SIZE_SP,
+                                        )
                                     }
                                     if (pan.y != 0f && cellHeightPx > 0f) {
                                         // 下ドラッグ（pan.y>0）で過去へ、上ドラッグで最新へ。
@@ -350,7 +374,10 @@ fun TerminalScreen(
                             composingEnd = composition?.end ?: -1,
                             defaultFgArgb = baseFgArgb,
                             composingColorArgb = composingColorArgb,
-                            fontScale = fontScale,
+                            fontSizeSp = liveFontSizeSp,
+                            lineSpacing = lineSpacing,
+                            backgroundArgb = palette.background,
+                            cursorArgb = palette.cursor,
                             scrollOffset = scrollOffset,
                             onCellHeight = { cellHeightPx = it },
                             modifier = Modifier

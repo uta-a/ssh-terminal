@@ -2,25 +2,43 @@ package com.uta.tunnel.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.uta.tunnel.BuildConfig
+import com.uta.tunnel.data.SettingsStore
+import com.uta.tunnel.terminal.TerminalPalettes
+import kotlin.math.roundToInt
 
 /**
  * 設定画面。TopAppBar + スクロール Column にセクションを並べる IR Tool 流儀。
@@ -33,10 +51,18 @@ fun SettingsScreen(
     onBiometricChange: (Boolean) -> Unit,
     sessionsTabFirst: Boolean,
     onSessionsTabFirstChange: (Boolean) -> Unit,
+    paletteId: String,
+    onPaletteChange: (String) -> Unit,
+    fontSizeSp: Float,
+    lineSpacing: Float,
+    onFontChange: (sizeSp: Float, lineSpacing: Float) -> Unit,
     onOpenKeys: () -> Unit,
     onOpenKnownHosts: () -> Unit,
     onBack: (() -> Unit)? = null,
 ) {
+    var paletteDialog by rememberSaveable { mutableStateOf(false) }
+    var fontDialog by rememberSaveable { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -59,8 +85,18 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState()),
         ) {
             SettingsSectionTitle("外観")
-            PlaceholderItem("テーマ・配色パレット", "Dynamic Color / モダンパレット")
-            PlaceholderItem("フォント・行間", "端末の等幅フォントと行間")
+            ListItem(
+                headlineContent = { Text("テーマ・配色パレット") },
+                supportingContent = { Text(paletteLabel(paletteId)) },
+                modifier = Modifier.clickable { paletteDialog = true },
+            )
+            ListItem(
+                headlineContent = { Text("フォント・行間") },
+                supportingContent = {
+                    Text("端末の等幅フォント ${fontSizeSp.roundToInt()} sp / 行間 ${"%.2f".format(lineSpacing)}")
+                },
+                modifier = Modifier.clickable { fontDialog = true },
+            )
             ListItem(
                 headlineContent = { Text("タブの並びを入れ替え") },
                 supportingContent = {
@@ -107,6 +143,123 @@ fun SettingsScreen(
             PlaceholderItem("バージョン", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
         }
     }
+
+    if (paletteDialog) {
+        PaletteDialog(
+            current = paletteId,
+            onSelect = {
+                onPaletteChange(it)
+                paletteDialog = false
+            },
+            onDismiss = { paletteDialog = false },
+        )
+    }
+
+    if (fontDialog) {
+        FontDialog(
+            fontSizeSp = fontSizeSp,
+            lineSpacing = lineSpacing,
+            onApply = { size, spacing ->
+                onFontChange(size, spacing)
+                fontDialog = false
+            },
+            onDismiss = { fontDialog = false },
+        )
+    }
+}
+
+/** 選択中パレットの表示名（不明な id は既定として扱う）。 */
+private fun paletteLabel(id: String): String = when (id) {
+    TerminalPalettes.DYNAMIC_ID -> "Dynamic Color（壁紙連動）"
+    else -> (TerminalPalettes.byId(id) ?: TerminalPalettes.Default).label
+}
+
+@Composable
+private fun PaletteDialog(
+    current: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    // 固定プリセット ＋ 壁紙連動。ANSI 16 色は Dynamic では作れないため、
+    // Dynamic は背景・文字色・カーソルのみテーマ由来になる（一覧の説明で明示する）。
+    val options = TerminalPalettes.presets.map { it.id to it.label } +
+        (TerminalPalettes.DYNAMIC_ID to "Dynamic Color（壁紙連動）")
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("配色パレット") },
+        text = {
+            Column {
+                options.forEach { (id, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(id) }
+                            .padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = id == current, onClick = { onSelect(id) })
+                        Spacer(Modifier.width(8.dp))
+                        Text(label)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("閉じる") }
+        },
+    )
+}
+
+@Composable
+private fun FontDialog(
+    fontSizeSp: Float,
+    lineSpacing: Float,
+    onApply: (Float, Float) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var size by rememberSaveable { mutableFloatStateOf(fontSizeSp) }
+    var spacing by rememberSaveable { mutableFloatStateOf(lineSpacing) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("フォント・行間") },
+        text = {
+            Column {
+                Text("サイズ ${size.roundToInt()} sp", style = MaterialTheme.typography.labelLarge)
+                Slider(
+                    value = size,
+                    onValueChange = { size = it },
+                    valueRange = SettingsStore.MIN_FONT_SIZE_SP..SettingsStore.MAX_FONT_SIZE_SP,
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "行間 ${"%.2f".format(spacing)}",
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Slider(
+                    value = spacing,
+                    onValueChange = { spacing = it },
+                    valueRange = SettingsStore.MIN_LINE_SPACING..SettingsStore.MAX_LINE_SPACING,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "端末画面のピンチ操作でもサイズを変えられます",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onApply(size, spacing) }) { Text("適用") }
+        },
+        dismissButton = {
+            TextButton(onClick = {
+                size = SettingsStore.DEFAULT_FONT_SIZE_SP
+                spacing = SettingsStore.DEFAULT_LINE_SPACING
+            }) { Text("既定に戻す") }
+        },
+    )
 }
 
 @Composable

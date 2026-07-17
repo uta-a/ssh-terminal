@@ -39,7 +39,10 @@ fun TerminalCanvas(
     composingEnd: Int,
     defaultFgArgb: Int,
     composingColorArgb: Int,
-    fontScale: Float,
+    fontSizeSp: Float,
+    lineSpacing: Float,
+    backgroundArgb: Int,
+    cursorArgb: Int,
     scrollOffset: Int,
     onCellHeight: (Float) -> Unit,
     modifier: Modifier = Modifier,
@@ -61,22 +64,24 @@ fun TerminalCanvas(
         }.getOrDefault(Typeface.DEFAULT)
     }
     val fallbackTypeface = remember { Typeface.DEFAULT }
-    // 基準 14sp にピンチ操作の倍率を掛けた実サイズ。倍率が変わるとセル寸法も再計算される。
-    val textSizePx = with(density) { (14f * fontScale).sp.toPx() }
+    // 設定（＝端末画面のピンチ操作でも書き換わる）のフォントサイズ。変わるとセル寸法も再計算される。
+    val textSizePx = with(density) { fontSizeSp.sp.toPx() }
 
     val paint = remember { Paint(Paint.ANTI_ALIAS_FLAG) }
     paint.typeface = typeface
     paint.textSize = textSizePx
     val fm = remember(textSizePx) { paint.fontMetrics }
     val cellW = remember(textSizePx) { paint.measureText("M").coerceAtLeast(1f) }
-    val cellH = remember(textSizePx) { ceil(fm.descent - fm.ascent).coerceAtLeast(1f) }
+    // 行間は素のフォントメトリクスに倍率を掛けて作る（1.0 でメトリクスそのまま）。
+    val cellH = remember(textSizePx, lineSpacing) {
+        ceil((fm.descent - fm.ascent) * lineSpacing).coerceAtLeast(1f)
+    }
 
     // スクロール（px→行）の換算に使うため、セル高をホイストする。
     LaunchedEffect(cellH) { onCellHeight(cellH) }
 
-    // 端末の地色・カーソルは calm な固定色。色指定なしの既定文字色は Material You 由来（呼び出し側から受け取る）。
-    val surfaceArgb = TerminalPalette.BACKGROUND
-    val cursorArgb = TerminalPalette.CURSOR
+    // 端末の地色・カーソルは選択中のパレット由来（呼び出し側で解決して渡す）。
+    val surfaceArgb = backgroundArgb
 
     // ビューポート（カード内寸）に合わせて桁数/行数を算出しリサイズする。
     // キーボード表示でカードが縮むと行数も減り、シェル下端（プロンプト）がキーボード上端に収まる。

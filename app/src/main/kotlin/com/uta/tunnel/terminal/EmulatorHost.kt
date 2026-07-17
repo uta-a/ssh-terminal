@@ -79,8 +79,15 @@ class EmulatorHost(
 
     init {
         // ビビッドな既定 ANSI 色を calm な muted パレットへ差し替える。
-        TerminalPalette.applyTo(emulator.mColors.mCurrentColors)
+        // 設定で選ばれたパレットは UI 側が [applyPalette] で上書きする。
+        applyPalette(TerminalPalettes.Default)
         transport.setOnReceive { data, len -> feed(data, len) }
+    }
+
+    /** 設定で選ばれたパレットの ANSI 16 色を反映する。メインスレッドから呼ぶこと。 */
+    fun applyPalette(palette: TerminalPalette) {
+        palette.applyTo(emulator.mColors.mCurrentColors)
+        invalidate()
     }
 
     /** 受信バイト（stdout 相当）をエミュレータへ流し込む。 */
